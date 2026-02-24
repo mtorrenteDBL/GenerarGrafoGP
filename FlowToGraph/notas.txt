@@ -1,0 +1,18 @@
+reemplazo de variables en queries -> pueden salir de otro procesador
+
+rutas en files -> directorio o si o si archivo?
+skippeo paths que son solo una variable
+
+
+
+las tablas se crean con el nombre y la zona. Si no hay zona se interpreta como que no es del datalake y por lo tanto es origen
+la clave es zona::nombre_tabla
+
+si la query hardcodeada tiene un insert into:
+    crear las tablas del from
+    crear las tablas del insert into
+    las tablas del from ALIMENTA_A las tablas del insert into
+    el PG LEE_DE las tablas del from y ESCRIBE_EN las tablas del insert into
+else 
+    crear las tablas del from
+    el PG LEE_DE las tablas del from

@@ -1,0 +1,10 @@
+// Find all root ProcessGroups (those without incoming CONTIENE relationships)
+MATCH (pg:ProcessGroup)
+WHERE NOT ()-[:CONTIENE]->(pg)
+RETURN pg.nifi_id, pg.name
+
+MATCH (pg:ProcessGroup)--(t:`Atlas Term`)--(c:Clasificacion)
+RETURN DISTINCT 
+    pg.name AS ProcessGroup, 
+    t.nombre AS AtlasTerm, 
+    c.nombre AS Classification

@@ -1,0 +1,17 @@
+# Config
+.venv/
+*__pycache__/*
+.ruff_cache/
+.vscode/*
+
+# Data Folders
+tmp/*
+DOWNLOADED_ATLAS_TERMS/*
+DRS_ATLAS_PROD/*
+
+# Files
+.env
+*.csv
+*.pyc
+*.json
+*.log

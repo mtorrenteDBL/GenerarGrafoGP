@@ -1,0 +1,21 @@
+Ambiente,Nombre,IP,path al flow,tipo de flow
+PROD,DRS,"172.30.215.221
+172.30.215.222",/opt/nifi/nifi-1.19.1/conf,XML y JSON
+PROD,KiFi 01,"172.30.215.205
+172.30.215.206
+172.30.215.208",/opt/apache-nifi/conf/,XML y JSON
+PROD,KiFi 02,"172.30.215.25
+172.30.215.26
+172.30.215.27",/opt/apache-nifi/conf/,XML y JSON
+PROD,KiFi 03,"172.30.215.216
+172.30.215.217
+172.30.215.218",/opt/apache-nifi/conf/,XML y JSON
+PROD,NiFi CDF Standalone,172.30.215.201,/var/lib/nifi,XML
+PROD,NiFi Cluster CDF,"172.30.215.202
+172.30.215.203
+172.30.215.204",/var/lib/nifi,XML
+PROD,NiFi Fraude SAM,"172.30.215.111
+172.30.215.112
+172.30.215.113
+172.30.215.114
+172.30.215.150",/opt/nifi-1.16.0/conf,XML y JSON
