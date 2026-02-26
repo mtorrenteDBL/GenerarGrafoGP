@@ -25,13 +25,30 @@ if [[ ${#flow_files[@]} -eq 0 ]]; then
     exit 1
 fi
 
+failed_flows=()
 for flow_file in "${flow_files[@]}"; do
     flow_name="$(basename "${flow_file}")"
+
+    # Skip empty files left over from failed downloads
+    if [[ ! -s "${flow_file}" ]]; then
+        echo ""
+        echo "--- Skipping: ${flow_name} (empty file) ---"
+        failed_flows+=("${flow_name}")
+        continue
+    fi
+
     echo ""
     echo "--- Processing: ${flow_name} ---"
-    uv run "${SCRIPT_DIR}/main.py" --flow "${flow_file}" --root-name "${flow_name%.*}"
+    if ! uv run "${SCRIPT_DIR}/main.py" --flow "${flow_file}" --root-name "${flow_name%.*}"; then
+        echo "  ✘ ${flow_name} failed" >&2
+        failed_flows+=("${flow_name}")
+    fi
 done
 
 echo ""
-echo "=== Done ==="
+if [[ ${#failed_flows[@]} -gt 0 ]]; then
+    echo "=== Warning: ${#failed_flows[@]} flow(s) failed: ${failed_flows[*]} ==="
+else
+    echo "=== All flows processed successfully ==="
+fi
 echo "(Logs written to ${SCRIPT_DIR}/log/)"

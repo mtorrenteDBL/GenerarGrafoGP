@@ -16,6 +16,7 @@ SSH credentials are loaded from a .env file with the following keys:
 import csv
 import gzip
 import os
+import shutil
 import stat
 import logging
 from pathlib import Path
@@ -23,8 +24,9 @@ from dotenv import load_dotenv
 import paramiko
 from log_setup import setup_logging
 
-CSV_PATH = Path("info_clusters.csv")
-OUTPUT_DIR = Path("flows")
+_SCRIPT_DIR = Path(__file__).resolve().parent
+CSV_PATH = _SCRIPT_DIR / "info_clusters.csv"
+OUTPUT_DIR = _SCRIPT_DIR / "flows"
 
 log = logging.getLogger(__name__)
 
@@ -101,9 +103,13 @@ def decompress_if_needed(path: Path) -> Path:
     decompressed = path.with_suffix("")  # e.g. flow.xml.gz -> flow.xml
     log.info("  ↳ Decompressing %s …", path.name)
     with gzip.open(path, "rb") as src, decompressed.open("wb") as dst:
-        dst.write(src.read())
+        shutil.copyfileobj(src, dst)          # stream in chunks – no 200 MB malloc
+    size = decompressed.stat().st_size
+    if size == 0:
+        decompressed.unlink(missing_ok=True)
+        raise RuntimeError(f"Decompressed file {decompressed.name} is empty (0 bytes)")
     path.unlink()
-    log.info("  ✔ Decompressed to %s (%d bytes)", decompressed.name, decompressed.stat().st_size)
+    log.info("  ✔ Decompressed to %s (%d bytes)", decompressed.name, size)
     return decompressed
 
 
@@ -151,8 +157,21 @@ def fetch_flow(cluster: dict, cfg: dict) -> bool:
 
                 log.info("  ✔ Found %s — downloading …", remote_path)
                 sftp.get(remote_path, str(local_path))
+
+                dl_size = local_path.stat().st_size
+                if dl_size == 0:
+                    log.warning("  ✘ Downloaded file %s is empty (0 bytes) — skipping", local_path.name)
+                    local_path.unlink(missing_ok=True)
+                    continue
+
                 local_path = decompress_if_needed(local_path)
-                log.info("  ✔ Saved %s (%d bytes)", local_path, local_path.stat().st_size)
+                final_size = local_path.stat().st_size
+                if final_size == 0:
+                    log.warning("  ✘ Final file %s is empty (0 bytes) — skipping", local_path.name)
+                    local_path.unlink(missing_ok=True)
+                    continue
+
+                log.info("  ✔ Saved %s (%d bytes)", local_path, final_size)
                 return True
 
             log.warning("  ✘ No flow file found at %s", cluster["path"])

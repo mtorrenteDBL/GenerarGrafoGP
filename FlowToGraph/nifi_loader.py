@@ -44,6 +44,10 @@ def dotget(d: dict[str, Any], *path: str, default: Any = None) -> Any:
 
 def load_flow(path: Path) -> dict[str, Any]:
     """Load a NiFi flow from JSON or XML file."""
+    if not path.exists():
+        raise FileNotFoundError(f"Flow file not found: {path}")
+    if path.stat().st_size == 0:
+        raise ValueError(f"Flow file is empty (0 bytes): {path}")
     suffix = path.suffix.lower()
     log.debug("Loading flow file: %s (format: %s)", path.name, suffix)
     if suffix == ".xml":
