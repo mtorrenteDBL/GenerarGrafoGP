@@ -1,5 +1,6 @@
 import sqlglot
 from sqlglot import exp
+from sqlglot.errors import ErrorLevel
 import re
 import logging
 from typing import Optional
@@ -16,22 +17,95 @@ class SQLUtils:
     FROM_JOIN_REGEX = re.compile(r'\b(?:FROM|JOIN)\s+([a-zA-Z0-9_.\"`]+)', re.IGNORECASE)
     INSERT_INTO_REGEX = re.compile(r'\b(?:INSERT\s+INTO|UPDATE|TABLE|INTO)\s+([a-zA-Z0-9_.\"`]+)', re.IGNORECASE)
 
+    # Matches *innermost* NiFi EL: ${VAR}, ${VAR:fn(args)}, etc.
+    # [^{}] excludes both braces so nested ${…} are resolved inside-out.
+    _NIFI_EL_REGEX = re.compile(r'\$\{([^{}]+)\}')
+
+    # Detects a var_ placeholder sitting where an SQL operator should be,
+    # e.g.  "col var_Filtro CAST(…)"  →  "col = CAST(…)"
+    _OPERATOR_VAR_RE = re.compile(
+        r'(\b\w+(?:\.\w+)*)\s+(var_\w+)\s+'
+        r'(?=CAST\b|\bSELECT\b|\(|\'|"|\d)',
+        re.IGNORECASE,
+    )
+    _SQL_STRUCTURAL_KW = frozenset({
+        'from', 'join', 'into', 'set', 'update', 'select', 'insert',
+        'on', 'table', 'by', 'values', 'inner', 'outer', 'left', 'right',
+        'cross', 'full', 'delete', 'create', 'alter', 'drop', 'where',
+        'having', 'group', 'order', 'limit', 'union', 'except', 'intersect',
+        'as', 'merge', 'upsert', 'using', 'and', 'or', 'not', 'in',
+        'between', 'like', 'is', 'case', 'when', 'then', 'else', 'end',
+    })
+
+    @staticmethod
+    def _nifi_el_to_placeholder(m: re.Match) -> str:
+        """Convert a NiFi EL match like ${ENTORNO:substring(0,2)} → var_ENTORNO."""
+        content = m.group(1)
+        # Keep only the variable name (strip :function calls)
+        var_name = re.split(r'[:\s]', content, maxsplit=1)[0]
+        # Ensure it is a valid SQL identifier fragment
+        var_name = re.sub(r'[^a-zA-Z0-9_]', '_', var_name)
+        return f"var_{var_name}"
+
+    @classmethod
+    def _fix_operator_vars(cls, sql: str) -> str:
+        """Replace var_XXX in operator position with '='."""
+        def _repl(m: re.Match) -> str:
+            preceding = m.group(1)
+            if preceding.lower() in cls._SQL_STRUCTURAL_KW:
+                return m.group(0)  # don't touch keyword contexts
+            return f"{preceding} = "
+        return cls._OPERATOR_VAR_RE.sub(_repl, sql)
+
     @staticmethod
     def _sanitize_sql(sql: str) -> str:
         """
-        Reemplaza las variables $VAR por marcadores válidos SQL (var_VAR).
+        Reemplaza las variables NiFi EL (${…}) y $VAR por marcadores válidos SQL (var_VAR).
+        Also normalises non-standard SQL constructs so sqlglot can parse them.
         """
         # 1. Quitar comentarios
         sql_clean = re.sub(r'/\*.*?\*/', ' ', sql, flags=re.S)
         sql_clean = re.sub(r'--.*$', '', sql_clean, flags=re.M)
-        
-        # 2. Neutralizar strings (fechas, formatters, etc.) dentro de las funciones
-        #sql_clean = re.sub(r"('[^']*'|\"[^\"]*\")", r"'STRING_LITERAL_MARKER'", sql_clean)
 
-        # 2. Reemplazar $ por var_
+        # 2. Reemplazar expresiones NiFi EL completas ${…} → var_VARNAME
+        #    Loop to resolve nested EL like ${fn(${inner})} inside-out.
+        prev = None
+        while prev != sql_clean:
+            prev = sql_clean
+            sql_clean = SQLUtils._NIFI_EL_REGEX.sub(
+                SQLUtils._nifi_el_to_placeholder, sql_clean
+            )
+
+        # 3. Strip orphaned braces left over from nested EL
+        sql_clean = re.sub(r'[{}]', '', sql_clean)
+
+        # 4. Reemplazar marcadores sueltos restantes ($VAR sin llaves)
         sql_clean = re.sub(r'\$INSERT_STATEMENT', ' ', sql_clean, flags=re.IGNORECASE)
-        sanitized_sql = sql_clean.replace('$', 'var_')
-        return sanitized_sql
+        sql_clean = sql_clean.replace('$', 'var_')
+
+        # 5. UPSERT INTO → INSERT INTO  (Kudu/Impala, not in sqlglot)
+        sql_clean = re.sub(r'\bUPSERT\s+INTO\b', 'INSERT INTO', sql_clean, flags=re.IGNORECASE)
+
+        # 6. SELECT TOP N → SELECT  (T-SQL, not in Hive dialect)
+        sql_clean = re.sub(r'\bSELECT\s+TOP\s+\d+\b', 'SELECT', sql_clean, flags=re.IGNORECASE)
+
+        # 7. Variable placeholders in operator position
+        #    e.g. "col var_Filtro CAST(…)" → "col = CAST(…)"
+        sql_clean = SQLUtils._fix_operator_vars(sql_clean)
+
+        # 8. Strip PARTITION(...) clause (Hive dynamic-partition INSERT)
+        sql_clean = re.sub(r'\bPARTITION\s*\([^)]*\)', '', sql_clean, flags=re.IGNORECASE)
+
+        # 9. Strip Impala-specific statements that sqlglot cannot parse.
+        sql_clean = re.sub(r'\bCOMPUTE\s+STATS\b[^;]*;?', '', sql_clean, flags=re.IGNORECASE)
+        sql_clean = re.sub(r'\bINVALIDATE\s+METADATA\b[^;]*;?', '', sql_clean, flags=re.IGNORECASE)
+
+        # 10. Collapse spaced comparison operators:  > = → >=,  < = → <=,  ! = → !=
+        sql_clean = re.sub(r'>\s+=', '>=', sql_clean)
+        sql_clean = re.sub(r'<\s+=', '<=', sql_clean)
+        sql_clean = re.sub(r'!\s+=', '!=', sql_clean)
+
+        return sql_clean
 
     @staticmethod
     def _restore_name(name: str) -> str:
@@ -47,27 +121,67 @@ class SQLUtils:
 
         clean_sql = SQLUtils._sanitize_sql(sql_text)
 
-        try:
-            # Usamos 'hive' ya que el SQL usa sintaxis compatible (coalesce, cast, etc)
-            parsed_list = sqlglot.parse(clean_sql, read='hive')
-            if not parsed_list: return set(), None
-            parsed = parsed_list[0]
-        except Exception as e:
+        # Try several sqlglot dialects before falling back to regex.
+        # Two passes: strict first (raises on error), then lenient
+        # (ErrorLevel.WARN returns partial AST — good enough for table names).
+        parsed = None
+        dialect_errors: list[tuple[str, Exception]] = []
+        dialects: list[tuple[str, str | None]] = [
+            ('Hive', 'hive'),
+            ('Spark', 'spark'),
+            ('TSQL', 'tsql'),
+            ('Default', None),
+        ]
 
+        # Pass 1 — strict
+        for label, dialect in dialects:
             try:
-                logger.warning(f"Error parsing SQL with dialect Hive: {e}")
-                parsed_list = sqlglot.parse(clean_sql, read=None)
-                if not parsed_list: return set(), None
-                parsed = parsed_list[0]
+                parsed_list = sqlglot.parse(clean_sql, read=dialect)
+                if parsed_list and parsed_list[0] is not None:
+                    parsed = parsed_list[0]
+                    break
             except Exception as e:
+                dialect_errors.append((label, e))
+                logger.debug("Dialect %s (strict) failed: %s", label, e)
 
-                logger.warning(f"Error parsing SQL with no dialect: {e}")
-                try:
-                    sources, dest = SQLUtils._extract_via_regex(clean_sql)
-                    return sources, dest
-                except Exception as e:
-                    logger.error('Error parsing SQL with regex: {e}. Impossible to extract tables and destination')
-                    return set(), None
+        # Pass 2 — lenient (partial AST)
+        # Temporarily silence sqlglot's own logger so its internal
+        # ERROR/WARNING messages don't pollute the application logs.
+        if parsed is None:
+            _sg_logger = logging.getLogger("sqlglot")
+            _sg_prev_level = _sg_logger.level
+            _sg_logger.setLevel(logging.CRITICAL)
+            try:
+                for label, dialect in dialects:
+                    try:
+                        parsed_list = sqlglot.parse(
+                            clean_sql, read=dialect, error_level=ErrorLevel.WARN,
+                        )
+                        if parsed_list and parsed_list[0] is not None:
+                            parsed = parsed_list[0]
+                            logger.debug(
+                                "Dialect %s (lenient) produced partial AST", label,
+                            )
+                            break
+                    except Exception as e:
+                        logger.debug("Dialect %s (lenient) failed: %s", label, e)
+            finally:
+                _sg_logger.setLevel(_sg_prev_level)
+
+        if parsed is None:
+            # All dialects failed — log once with the details, then try regex.
+            if dialect_errors:
+                labels = ', '.join(lbl for lbl, _ in dialect_errors)
+                logger.warning(
+                    "All SQL dialects (%s) failed for statement (first 500 chars): %.500s",
+                    labels, clean_sql,
+                )
+            try:
+                sources, dest = SQLUtils._extract_via_regex(clean_sql)
+                return sources, dest
+            except Exception as e:
+                logger.error('Regex fallback also failed: %s', e)
+                return set(), None
 
         # 1. Identificar nombres de CTEs (para no confundirlas con tablas reales)
         # Buscamos en todo el árbol porque puede haber CTEs anidadas
