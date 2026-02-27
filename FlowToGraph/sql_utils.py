@@ -93,6 +93,11 @@ class SQLUtils:
         #    e.g. "col var_Filtro CAST(…)" → "col = CAST(…)"
         sql_clean = SQLUtils._fix_operator_vars(sql_clean)
 
+        # 8. Strip PARTITION(...) clause (Hive dynamic-partition INSERT)
+        #    e.g. INSERT INTO t (cols) PARTITION(fecha_proceso) SELECT ...
+        #    sqlglot chokes on PARTITION between the column list and SELECT.
+        sql_clean = re.sub(r'\bPARTITION\s*\([^)]*\)', '', sql_clean, flags=re.IGNORECASE)
+
         return sql_clean
 
     @staticmethod
@@ -111,6 +116,7 @@ class SQLUtils:
 
         # Try several sqlglot dialects before falling back to regex.
         parsed = None
+        dialect_errors: list[tuple[str, Exception]] = []
         dialects: list[tuple[str, str | None]] = [
             ('Hive', 'hive'),
             ('TSQL', 'tsql'),
@@ -123,14 +129,22 @@ class SQLUtils:
                     parsed = parsed_list[0]
                     break
             except Exception as e:
-                logger.warning("Error parsing SQL with dialect %s: %s", label, e)
+                dialect_errors.append((label, e))
+                logger.debug("Dialect %s failed: %s", label, e)
 
         if parsed is None:
+            # All dialects failed — log once with the details, then try regex.
+            if dialect_errors:
+                labels = ', '.join(lbl for lbl, _ in dialect_errors)
+                logger.warning(
+                    "All SQL dialects (%s) failed for statement (first 200 chars): %.200s",
+                    labels, clean_sql,
+                )
             try:
                 sources, dest = SQLUtils._extract_via_regex(clean_sql)
                 return sources, dest
             except Exception as e:
-                logger.error('Error parsing SQL with regex: %s. Impossible to extract tables and destination', e)
+                logger.error('Regex fallback also failed: %s', e)
                 return set(), None
 
         # 1. Identificar nombres de CTEs (para no confundirlas con tablas reales)
