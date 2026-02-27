@@ -1,6 +1,7 @@
 
 import sqlglot
 from sqlglot import exp
+from sqlglot.errors import ErrorLevel
 import re
 import logging
 from typing import Optional
@@ -115,13 +116,18 @@ class SQLUtils:
         clean_sql = SQLUtils._sanitize_sql(sql_text)
 
         # Try several sqlglot dialects before falling back to regex.
+        # Two passes: strict first (raises on error), then lenient
+        # (ErrorLevel.WARN returns partial AST — good enough for table names).
         parsed = None
         dialect_errors: list[tuple[str, Exception]] = []
         dialects: list[tuple[str, str | None]] = [
             ('Hive', 'hive'),
+            ('Spark', 'spark'),
             ('TSQL', 'tsql'),
             ('Default', None),
         ]
+
+        # Pass 1 — strict
         for label, dialect in dialects:
             try:
                 parsed_list = sqlglot.parse(clean_sql, read=dialect)
@@ -130,14 +136,30 @@ class SQLUtils:
                     break
             except Exception as e:
                 dialect_errors.append((label, e))
-                logger.debug("Dialect %s failed: %s", label, e)
+                logger.debug("Dialect %s (strict) failed: %s", label, e)
+
+        # Pass 2 — lenient (partial AST)
+        if parsed is None:
+            for label, dialect in dialects:
+                try:
+                    parsed_list = sqlglot.parse(
+                        clean_sql, read=dialect, error_level=ErrorLevel.WARN,
+                    )
+                    if parsed_list and parsed_list[0] is not None:
+                        parsed = parsed_list[0]
+                        logger.debug(
+                            "Dialect %s (lenient) produced partial AST", label,
+                        )
+                        break
+                except Exception as e:
+                    logger.debug("Dialect %s (lenient) failed: %s", label, e)
 
         if parsed is None:
             # All dialects failed — log once with the details, then try regex.
             if dialect_errors:
                 labels = ', '.join(lbl for lbl, _ in dialect_errors)
                 logger.warning(
-                    "All SQL dialects (%s) failed for statement (first 200 chars): %.200s",
+                    "All SQL dialects (%s) failed for statement (first 500 chars): %.500s",
                     labels, clean_sql,
                 )
             try:
