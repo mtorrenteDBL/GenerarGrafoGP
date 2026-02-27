@@ -17,8 +17,25 @@ class SQLUtils:
     FROM_JOIN_REGEX = re.compile(r'\b(?:FROM|JOIN)\s+([a-zA-Z0-9_.\"`]+)', re.IGNORECASE)
     INSERT_INTO_REGEX = re.compile(r'\b(?:INSERT\s+INTO|UPDATE|TABLE|INTO)\s+([a-zA-Z0-9_.\"`]+)', re.IGNORECASE)
 
-    # Matches NiFi Expression Language: ${VAR}, ${VAR:fn(args)}, etc.
-    _NIFI_EL_REGEX = re.compile(r'\$\{([^}]+)\}')
+    # Matches *innermost* NiFi EL: ${VAR}, ${VAR:fn(args)}, etc.
+    # [^{}] excludes both braces so nested ${…} are resolved inside-out.
+    _NIFI_EL_REGEX = re.compile(r'\$\{([^{}]+)\}')
+
+    # Detects a var_ placeholder sitting where an SQL operator should be,
+    # e.g.  "col var_Filtro CAST(…)"  →  "col = CAST(…)"
+    _OPERATOR_VAR_RE = re.compile(
+        r'(\b\w+(?:\.\w+)*)\s+(var_\w+)\s+'
+        r'(?=CAST\b|\bSELECT\b|\(|\'|"|\d)',
+        re.IGNORECASE,
+    )
+    _SQL_STRUCTURAL_KW = frozenset({
+        'from', 'join', 'into', 'set', 'update', 'select', 'insert',
+        'on', 'table', 'by', 'values', 'inner', 'outer', 'left', 'right',
+        'cross', 'full', 'delete', 'create', 'alter', 'drop', 'where',
+        'having', 'group', 'order', 'limit', 'union', 'except', 'intersect',
+        'as', 'merge', 'upsert', 'using', 'and', 'or', 'not', 'in',
+        'between', 'like', 'is', 'case', 'when', 'then', 'else', 'end',
+    })
 
     @staticmethod
     def _nifi_el_to_placeholder(m: re.Match) -> str:
@@ -30,24 +47,53 @@ class SQLUtils:
         var_name = re.sub(r'[^a-zA-Z0-9_]', '_', var_name)
         return f"var_{var_name}"
 
+    @classmethod
+    def _fix_operator_vars(cls, sql: str) -> str:
+        """Replace var_XXX in operator position with '='."""
+        def _repl(m: re.Match) -> str:
+            preceding = m.group(1)
+            if preceding.lower() in cls._SQL_STRUCTURAL_KW:
+                return m.group(0)  # don't touch keyword contexts
+            return f"{preceding} = "
+        return cls._OPERATOR_VAR_RE.sub(_repl, sql)
+
     @staticmethod
     def _sanitize_sql(sql: str) -> str:
         """
         Reemplaza las variables NiFi EL (${…}) y $VAR por marcadores válidos SQL (var_VAR).
+        Also normalises non-standard SQL constructs so sqlglot can parse them.
         """
         # 1. Quitar comentarios
         sql_clean = re.sub(r'/\*.*?\*/', ' ', sql, flags=re.S)
         sql_clean = re.sub(r'--.*$', '', sql_clean, flags=re.M)
 
         # 2. Reemplazar expresiones NiFi EL completas ${…} → var_VARNAME
-        #    (must happen BEFORE the generic '$' replacement so that braces
-        #    and colon-functions like :substring(0,2) are removed)
-        sql_clean = SQLUtils._NIFI_EL_REGEX.sub(SQLUtils._nifi_el_to_placeholder, sql_clean)
+        #    Loop to resolve nested EL like ${fn(${inner})} inside-out.
+        prev = None
+        while prev != sql_clean:
+            prev = sql_clean
+            sql_clean = SQLUtils._NIFI_EL_REGEX.sub(
+                SQLUtils._nifi_el_to_placeholder, sql_clean
+            )
 
-        # 3. Reemplazar marcadores sueltos restantes ($VAR sin llaves)
+        # 3. Strip orphaned braces left over from nested EL
+        sql_clean = re.sub(r'[{}]', '', sql_clean)
+
+        # 4. Reemplazar marcadores sueltos restantes ($VAR sin llaves)
         sql_clean = re.sub(r'\$INSERT_STATEMENT', ' ', sql_clean, flags=re.IGNORECASE)
-        sanitized_sql = sql_clean.replace('$', 'var_')
-        return sanitized_sql
+        sql_clean = sql_clean.replace('$', 'var_')
+
+        # 5. UPSERT INTO → INSERT INTO  (Kudu/Impala, not in sqlglot)
+        sql_clean = re.sub(r'\bUPSERT\s+INTO\b', 'INSERT INTO', sql_clean, flags=re.IGNORECASE)
+
+        # 6. SELECT TOP N → SELECT  (T-SQL, not in Hive dialect)
+        sql_clean = re.sub(r'\bSELECT\s+TOP\s+\d+\b', 'SELECT', sql_clean, flags=re.IGNORECASE)
+
+        # 7. Variable placeholders in operator position
+        #    e.g. "col var_Filtro CAST(…)" → "col = CAST(…)"
+        sql_clean = SQLUtils._fix_operator_vars(sql_clean)
+
+        return sql_clean
 
     @staticmethod
     def _restore_name(name: str) -> str:
@@ -63,27 +109,29 @@ class SQLUtils:
 
         clean_sql = SQLUtils._sanitize_sql(sql_text)
 
-        try:
-            # Usamos 'hive' ya que el SQL usa sintaxis compatible (coalesce, cast, etc)
-            parsed_list = sqlglot.parse(clean_sql, read='hive')
-            if not parsed_list: return set(), None
-            parsed = parsed_list[0]
-        except Exception as e:
-
+        # Try several sqlglot dialects before falling back to regex.
+        parsed = None
+        dialects: list[tuple[str, str | None]] = [
+            ('Hive', 'hive'),
+            ('TSQL', 'tsql'),
+            ('Default', None),
+        ]
+        for label, dialect in dialects:
             try:
-                logger.warning(f"Error parsing SQL with dialect Hive: {e}")
-                parsed_list = sqlglot.parse(clean_sql, read=None)
-                if not parsed_list: return set(), None
-                parsed = parsed_list[0]
+                parsed_list = sqlglot.parse(clean_sql, read=dialect)
+                if parsed_list and parsed_list[0] is not None:
+                    parsed = parsed_list[0]
+                    break
             except Exception as e:
+                logger.warning("Error parsing SQL with dialect %s: %s", label, e)
 
-                logger.warning(f"Error parsing SQL with no dialect: {e}")
-                try:
-                    sources, dest = SQLUtils._extract_via_regex(clean_sql)
-                    return sources, dest
-                except Exception as e:
-                    logger.error('Error parsing SQL with regex: {e}. Impossible to extract tables and destination')
-                    return set(), None
+        if parsed is None:
+            try:
+                sources, dest = SQLUtils._extract_via_regex(clean_sql)
+                return sources, dest
+            except Exception as e:
+                logger.error('Error parsing SQL with regex: %s. Impossible to extract tables and destination', e)
+                return set(), None
 
         # 1. Identificar nombres de CTEs (para no confundirlas con tablas reales)
         # Buscamos en todo el árbol porque puede haber CTEs anidadas
