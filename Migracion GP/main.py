@@ -30,7 +30,7 @@ def main():
             "user": getenv('NEO4J_USER'),
             "password": getenv('NEO4J_PASS'),
         }
-        runner.run_load_mode(terms, config, delete_all=True)
+        runner.run_load_mode(terms, config, delete_all=False)
 
 if __name__ == "__main__":
     main()
