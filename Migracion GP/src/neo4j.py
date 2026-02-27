@@ -21,17 +21,17 @@ class GraphQueries:
     ]
 
     MERGE_ATLAS_TERM = """
-    MERGE (at:`Atlas Term` {clave: $clave})
+    MERGE (at:`Atlas Term` {nombre: $nombre})
     ON CREATE SET
-        at.nombre   = $nombre,
+        at.clave    = $clave,
         at.guid     = $guid,
         at.glossary = $glossary,
         at.origin   = $origin
     ON MATCH SET
-        at.nombre   = coalesce(at.nombre, $nombre),
-        at.guid     = coalesce(at.guid, $guid),
-        at.origin   = coalesce(at.origin, $origin),
-        at.glossary = coalesce(at.glossary, $glossary)
+        at.clave    = coalesce($clave, at.clave),
+        at.guid     = coalesce($guid, at.guid),
+        at.origin   = coalesce($origin, at.origin),
+        at.glossary = coalesce($glossary, at.glossary)
     RETURN at
     """
 
