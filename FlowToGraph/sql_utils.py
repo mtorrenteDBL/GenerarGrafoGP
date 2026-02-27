@@ -17,19 +17,34 @@ class SQLUtils:
     FROM_JOIN_REGEX = re.compile(r'\b(?:FROM|JOIN)\s+([a-zA-Z0-9_.\"`]+)', re.IGNORECASE)
     INSERT_INTO_REGEX = re.compile(r'\b(?:INSERT\s+INTO|UPDATE|TABLE|INTO)\s+([a-zA-Z0-9_.\"`]+)', re.IGNORECASE)
 
+    # Matches NiFi Expression Language: ${VAR}, ${VAR:fn(args)}, etc.
+    _NIFI_EL_REGEX = re.compile(r'\$\{([^}]+)\}')
+
+    @staticmethod
+    def _nifi_el_to_placeholder(m: re.Match) -> str:
+        """Convert a NiFi EL match like ${ENTORNO:substring(0,2)} → var_ENTORNO."""
+        content = m.group(1)
+        # Keep only the variable name (strip :function calls)
+        var_name = re.split(r'[:\s]', content, maxsplit=1)[0]
+        # Ensure it is a valid SQL identifier fragment
+        var_name = re.sub(r'[^a-zA-Z0-9_]', '_', var_name)
+        return f"var_{var_name}"
+
     @staticmethod
     def _sanitize_sql(sql: str) -> str:
         """
-        Reemplaza las variables $VAR por marcadores válidos SQL (var_VAR).
+        Reemplaza las variables NiFi EL (${…}) y $VAR por marcadores válidos SQL (var_VAR).
         """
         # 1. Quitar comentarios
         sql_clean = re.sub(r'/\*.*?\*/', ' ', sql, flags=re.S)
         sql_clean = re.sub(r'--.*$', '', sql_clean, flags=re.M)
-        
-        # 2. Neutralizar strings (fechas, formatters, etc.) dentro de las funciones
-        #sql_clean = re.sub(r"('[^']*'|\"[^\"]*\")", r"'STRING_LITERAL_MARKER'", sql_clean)
 
-        # 2. Reemplazar $ por var_
+        # 2. Reemplazar expresiones NiFi EL completas ${…} → var_VARNAME
+        #    (must happen BEFORE the generic '$' replacement so that braces
+        #    and colon-functions like :substring(0,2) are removed)
+        sql_clean = SQLUtils._NIFI_EL_REGEX.sub(SQLUtils._nifi_el_to_placeholder, sql_clean)
+
+        # 3. Reemplazar marcadores sueltos restantes ($VAR sin llaves)
         sql_clean = re.sub(r'\$INSERT_STATEMENT', ' ', sql_clean, flags=re.IGNORECASE)
         sanitized_sql = sql_clean.replace('$', 'var_')
         return sanitized_sql

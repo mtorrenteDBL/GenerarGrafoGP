@@ -87,6 +87,9 @@ def _is_valid_table(t: str) -> bool:
     """Returns False for variable placeholders and file-like paths."""
     if t.startswith("var_") or t.startswith("pr_var_"):
         return False
+    # After _restore_name, NiFi variables appear as $VAR inside the name
+    if '$' in t:
+        return False
     if infer_from_text(t) == "file":
         return False
     return True

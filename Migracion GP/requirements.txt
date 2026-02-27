@@ -1,5 +1,0 @@
-sqlparse
-requests
-python-dotenv
-neo4j
-sqlalchemy
