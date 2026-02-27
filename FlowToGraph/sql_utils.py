@@ -99,6 +99,16 @@ class SQLUtils:
         #    sqlglot chokes on PARTITION between the column list and SELECT.
         sql_clean = re.sub(r'\bPARTITION\s*\([^)]*\)', '', sql_clean, flags=re.IGNORECASE)
 
+        # 9. Strip Impala-specific statements that sqlglot cannot parse.
+        #    e.g. COMPUTE STATS db.tbl;  /  INVALIDATE METADATA db.tbl;
+        sql_clean = re.sub(r'\bCOMPUTE\s+STATS\b[^;]*;?', '', sql_clean, flags=re.IGNORECASE)
+        sql_clean = re.sub(r'\bINVALIDATE\s+METADATA\b[^;]*;?', '', sql_clean, flags=re.IGNORECASE)
+
+        # 10. Collapse spaced comparison operators:  > = → >=,  < = → <=,  ! = → !=
+        sql_clean = re.sub(r'>\s+=', '>=', sql_clean)
+        sql_clean = re.sub(r'<\s+=', '<=', sql_clean)
+        sql_clean = re.sub(r'!\s+=', '!=', sql_clean)
+
         return sql_clean
 
     @staticmethod
@@ -139,20 +149,28 @@ class SQLUtils:
                 logger.debug("Dialect %s (strict) failed: %s", label, e)
 
         # Pass 2 — lenient (partial AST)
+        # Temporarily silence sqlglot's own logger so its internal
+        # ERROR/WARNING messages don't pollute the application logs.
         if parsed is None:
-            for label, dialect in dialects:
-                try:
-                    parsed_list = sqlglot.parse(
-                        clean_sql, read=dialect, error_level=ErrorLevel.WARN,
-                    )
-                    if parsed_list and parsed_list[0] is not None:
-                        parsed = parsed_list[0]
-                        logger.debug(
-                            "Dialect %s (lenient) produced partial AST", label,
+            _sg_logger = logging.getLogger("sqlglot")
+            _sg_prev_level = _sg_logger.level
+            _sg_logger.setLevel(logging.CRITICAL)
+            try:
+                for label, dialect in dialects:
+                    try:
+                        parsed_list = sqlglot.parse(
+                            clean_sql, read=dialect, error_level=ErrorLevel.WARN,
                         )
-                        break
-                except Exception as e:
-                    logger.debug("Dialect %s (lenient) failed: %s", label, e)
+                        if parsed_list and parsed_list[0] is not None:
+                            parsed = parsed_list[0]
+                            logger.debug(
+                                "Dialect %s (lenient) produced partial AST", label,
+                            )
+                            break
+                    except Exception as e:
+                        logger.debug("Dialect %s (lenient) failed: %s", label, e)
+            finally:
+                _sg_logger.setLevel(_sg_prev_level)
 
         if parsed is None:
             # All dialects failed — log once with the details, then try regex.
