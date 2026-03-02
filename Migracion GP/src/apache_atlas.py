@@ -9,19 +9,58 @@ load_dotenv(find_dotenv(), override=True)
 from .logger import setup_logger
 logger = setup_logger('atlas')
 
-ATLAS_URL = getenv('ATLAS_URL')
-USERNAME  = getenv('ATLAS_USERNAME')
-PASSWORD  = getenv('ATLAS_PASSWORD')
+# Support a comma-separated list of Atlas URLs for fallback (e.g. two cluster nodes).
+_raw_urls = getenv('ATLAS_URL', '')
+ATLAS_URLS = [u.strip() for u in _raw_urls.split(',') if u.strip()]
+USERNAME   = getenv('ATLAS_USERNAME')
+PASSWORD   = getenv('ATLAS_PASSWORD')
 
 class Atlas:
 
     def __init__(self) -> None:
-
+        if not ATLAS_URLS:
+            raise RuntimeError("ATLAS_URL is not set in the environment.")
         self.session = requests.Session()
-        self.url = ATLAS_URL
+        self.urls = ATLAS_URLS
 
     def __del__(self) -> None:
         self.session.close()
+
+    def _request(self, method: str, path: str, **kwargs) -> requests.Response:
+        """Try each configured Atlas URL in order.
+
+        On success the winning URL is promoted to the front of the list so it
+        is preferred on the next call.  On failure the offending URL is demoted
+        to the back so healthier nodes are tried first next time.
+        If every URL fails the last exception is re-raised.
+        """
+        last_exc: Exception = RuntimeError("No Atlas URLs configured.")
+        for i, url in enumerate(self.urls):
+            full_url = f"{url}{path}"
+            try:
+                resp = self.session.request(
+                    method,
+                    full_url,
+                    auth=HTTPBasicAuth(USERNAME, PASSWORD),
+                    timeout=60,
+                    **kwargs,
+                )
+                resp.raise_for_status()
+                # Promote the winner to the front
+                if i != 0:
+                    self.urls.insert(0, self.urls.pop(i))
+                    logger.debug("Promoted Atlas URL to front: %s", url)
+                return resp
+            except Exception as e:
+                # Demote the failing URL to the back
+                self.urls.append(self.urls.pop(i))
+                logger.warning(
+                    "Atlas URL %s failed (%s). Demoted to back. %s",
+                    url, e,
+                    "Trying next URL..." if self.urls else "No more URLs to try.",
+                )
+                last_exc = e
+        raise last_exc
 
     def _search_term(self, term_name: str) -> Optional[dict]:
         
@@ -33,15 +72,12 @@ class Atlas:
         dsl = f"from AtlasGlossaryTerm where name = '{safe_name}'"
 
         try:
-            resp = self.session.get(
-                f"{self.url}/search/dsl",
+            resp = self._request(
+                "GET",
+                "/search/dsl",
                 params={"query": dsl, "limit": 1},
                 headers={'Accept': 'application/json'},
-                auth=HTTPBasicAuth(USERNAME, PASSWORD),
-                timeout=60
             )
-            resp.raise_for_status()
-        
         except Exception as e:
             raise RuntimeError(f"Error consultando Atlas DSL: {e}")
 
@@ -60,23 +96,21 @@ class Atlas:
 
     def _get_entity_by_guid(self, guid: str) -> Optional[dict]:
         try:
-            ent_resp = self.session.get(
-                f"{self.url}/entity/guid/{guid}",
+            ent_resp = self._request(
+                "GET",
+                f"/entity/guid/{guid}",
                 params={"minExtInfo": "true", "ignoreRelationships": "false"},
-                timeout=60
             )
-            ent_resp.raise_for_status()
             entity = ent_resp.json().get("entity", {}) or {}
         
         except Exception as e:
              raise RuntimeError(f"Error consultando Atlas entity: {e}")
 
         try:
-            cls_resp = self.session.get(
-                f"{self.url}/entity/guid/{guid}/classifications",
-                timeout=60
+            cls_resp = self._request(
+                "GET",
+                f"/entity/guid/{guid}/classifications",
             )
-            cls_resp.raise_for_status()
             cls_payload = cls_resp.json() or {}
             if isinstance(cls_payload, dict) and "list" in cls_payload and isinstance(cls_payload["list"], list):
                 cls_list = cls_payload["list"]

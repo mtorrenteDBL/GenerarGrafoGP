@@ -26,24 +26,13 @@ echo "=== Neo4j target: $NEO4J_HOST ==="
 echo ""
 echo "=== Wiping Neo4j database ==="
 
-# Use cypher-shell if available, otherwise fall back to the project's Python venv
+# Use cypher-shell if available, otherwise fall back to uv run
 if command -v cypher-shell &>/dev/null; then
     cypher-shell -a "$NEO4J_HOST" -u "$NEO4J_USER" -p "$NEO4J_PASS" \
         "MATCH (n) DETACH DELETE n;"
     echo "Database wiped via cypher-shell."
 else
-    # Resolve Python from the Migracion GP venv (works on Linux/macOS and Windows/Git-Bash)
-    VENV_PYTHON="$SCRIPT_DIR/Migracion GP/.venv/bin/python"
-    if [[ ! -f "$VENV_PYTHON" ]]; then
-        VENV_PYTHON="$SCRIPT_DIR/Migracion GP/.venv/Scripts/python"
-    fi
-
-    if [[ ! -f "$VENV_PYTHON" ]]; then
-        echo "ERROR: Could not find Python in 'Migracion GP/.venv' and cypher-shell is not installed." >&2
-        exit 1
-    fi
-
-    "$VENV_PYTHON" - <<EOF
+    uv run --project "$SCRIPT_DIR/Migracion GP" - <<EOF
 from neo4j import GraphDatabase
 
 driver = GraphDatabase.driver("${NEO4J_HOST}", auth=("${NEO4J_USER}", "${NEO4J_PASS}"))
