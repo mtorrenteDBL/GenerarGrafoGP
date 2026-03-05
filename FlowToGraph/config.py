@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any, Pattern
@@ -53,15 +54,20 @@ MERGE (pg)-[:EXECUTES {processor_name: $processor_name, processor_type: $process
 """
 
 # =========================
-# Neo4j Connection
+# Neo4j Connection (loaded from environment variables)
 # =========================
-NEO4J_URI = "bolt://172.30.213.52:10000"
-NEO4J_USER = "neo4j"
-NEO4J_PASS = "Dblandit2025"
+def get_neo4j_config() -> dict:
+    """Get Neo4j configuration from environment variables."""
+    return {
+        "uri": os.getenv("NEO4J_HOST", "bolt://localhost:7687"),
+        "user": os.getenv("NEO4J_USER", "neo4j"),
+        "password": os.getenv("NEO4J_PASS", "password"),
+    }
 
-# NEO4J_URI = "bolt://localhost:7687"
-# NEO4J_USER = "neo4j"
-# NEO4J_PASS = "12345678"
+# Backward compatibility - these will be populated from env at runtime
+NEO4J_URI = os.getenv("NEO4J_HOST", "bolt://localhost:7687")
+NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
+NEO4J_PASS = os.getenv("NEO4J_PASS", "password")
 
 # =========================
 # Defaults (whitelist ENFORCADA por defecto)

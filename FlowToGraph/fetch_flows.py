@@ -2,11 +2,12 @@
 """
 fetch_nifi_flows.py
 
-Connects via SSH to each NiFi cluster defined in clusters.csv,
+Connects via SSH to each NiFi cluster defined in data/info_clusters.csv,
 retrieves flow.json (preferred) or flow.xml from the configured path,
-and saves it flat under flows/. Compressed files are decompressed automatically.
+and saves it flat under data/flows/. Compressed files are decompressed automatically.
 
-SSH credentials are loaded from a .env file with the following keys:
+Note: This module expects environment variables to be already loaded by the main orchestrator.
+SSH credentials required:
     SSH_USER=your_username
     SSH_PASSWORD=your_password          # optional if using key auth
     SSH_KEY_PATH=/path/to/private_key   # optional if using password auth
@@ -20,13 +21,13 @@ import shutil
 import stat
 import logging
 from pathlib import Path
-from dotenv import load_dotenv
 import paramiko
 from log_setup import setup_logging
 
-_SCRIPT_DIR = Path(__file__).resolve().parent
-CSV_PATH = _SCRIPT_DIR / "info_clusters.csv"
-OUTPUT_DIR = _SCRIPT_DIR / "flows"
+# Paths relative to project root
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+CSV_PATH = _PROJECT_ROOT / "data" / "info_clusters.csv"
+OUTPUT_DIR = _PROJECT_ROOT / "data" / "flows"
 
 log = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def load_env() -> dict:
-    load_dotenv()
+    """Load SSH configuration from environment variables (already loaded by main.py)."""
     cfg = {
         "username": os.getenv("SSH_USER"),
         "port": int(os.getenv("SSH_PORT", "22")),
@@ -44,9 +45,9 @@ def load_env() -> dict:
         "key_path": os.getenv("SSH_KEY_PATH"),
     }
     if not cfg["username"]:
-        raise ValueError("SSH_USER is not set in the .env file.")
+        raise ValueError("SSH_USER is not set in environment variables.")
     if not cfg["password"] and not cfg["key_path"]:
-        raise ValueError("Set SSH_PASSWORD or SSH_KEY_PATH in the .env file.")
+        raise ValueError("Set SSH_PASSWORD or SSH_KEY_PATH in environment variables.")
     return cfg
 
 

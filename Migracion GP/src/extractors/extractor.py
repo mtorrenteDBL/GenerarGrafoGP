@@ -9,7 +9,7 @@ from .dataclasses_extractor import (
     Table,
 )
 from .zone_service import ZoneService
-from .sql_utils import SQLUtils
+from shared.sql_utils import SQLUtils
 from ..apache_atlas import Atlas
 from ..parse_sql import (
     looks_like_sql,

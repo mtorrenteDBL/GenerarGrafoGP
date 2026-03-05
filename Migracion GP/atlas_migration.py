@@ -1,14 +1,21 @@
+#!/usr/bin/env python3
+"""
+Atlas Migration Pipeline - Migrate Atlas terms to Neo4j.
+
+This module processes Atlas lineage metadata and loads it into Neo4j.
+Note: Environment variables are loaded by the main orchestrator.
+"""
 import argparse
 from src.pipeline import PipelineRunner
 
 from os import getenv
-from dotenv import load_dotenv, find_dotenv
-load_dotenv(find_dotenv(), override=True)
+
 
 def main():
     
     parser = argparse.ArgumentParser()
-    parser.add_argument("--csv", default="./atlas_terms.csv")
+    # Default path is now relative to project root
+    parser.add_argument("--csv", default="../data/atlas_terms.csv")
     
     parser.add_argument("--no-constraints", action="store_true")
     parser.add_argument("--plan-only", action="store_true")

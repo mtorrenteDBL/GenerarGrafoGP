@@ -199,6 +199,11 @@ class SQLUtils:
         # 2. Detectar destino (INSERT / UPDATE)
         if isinstance(parsed, exp.Insert):
             target = parsed.this
+            # INSERT INTO t (col1, col2, ...) SELECT ... wraps the table in a
+            # Schema node that includes the column list.  Unwrap it so we only
+            # keep the bare table name/db reference.
+            if isinstance(target, exp.Schema):
+                target = target.this
             destination = SQLUtils._restore_name(target.sql()).lower()
         elif isinstance(parsed, exp.Update):
             target = parsed.this

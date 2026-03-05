@@ -1,0 +1,118 @@
+================================================================================
+NEO4J DATABASE SCHEMA
+================================================================================
+
+NODE LABELS
+--------------------------------------------------------------------------------
+
+[Archivo]
+  Properties:
+    • nombre (string)
+    • zona (string)
+
+[Atlas Term]
+  Properties:
+    • nombre (string)
+
+[Clasificacion]
+  Properties:
+    • attrs_json (string)
+    • clave (string)
+    • nombre (string)
+    • term_clave (string)
+    • tipo (string)
+
+[Kafka]
+  Properties:
+    • flow_name (string)
+    • pg_id (string)
+    • role (string)
+    • topic (string)
+
+[ProcessGroup]
+  Properties:
+    • flow_name (string)
+    • is_root (boolean)
+    • name (string)
+    • nifi_id (string)
+
+[Script]
+  Properties:
+    • clave (string)
+    • extra (string)
+    • prop_name (string)
+    • ref_type (string)
+    • value (string)
+
+[Tabla]
+  Properties:
+    • clave (string)
+    • database (string)
+    • nombre (string)
+    • zona (string)
+
+
+RELATIONSHIP TYPES
+--------------------------------------------------------------------------------
+
+[ALIMENTA_A]
+  Properties: None
+  Connection Patterns:
+    • (Tabla) -[ALIMENTA_A]-> (Tabla)
+    • (Archivo) -[ALIMENTA_A]-> (Tabla)
+    • (Tabla) -[ALIMENTA_A]-> (Archivo)
+
+[CONSUME]
+  Properties: None
+  Connection Patterns:
+    • (ProcessGroup) -[CONSUME]-> (Kafka)
+
+[CONTIENE]
+  Properties: None
+  Connection Patterns:
+    • (ProcessGroup) -[CONTIENE]-> (ProcessGroup)
+
+[ENVIA_A]
+  Properties:
+    • topic (string)
+  Connection Patterns:
+    • (Kafka) -[ENVIA_A]-> (Kafka)
+
+[ESCRIBE_EN]
+  Properties: None
+  Connection Patterns:
+    • (Clasificacion) -[ESCRIBE_EN]-> (Tabla)
+    • (ProcessGroup) -[ESCRIBE_EN]-> (Archivo)
+    • (ProcessGroup) -[ESCRIBE_EN]-> (Tabla)
+    • (Clasificacion) -[ESCRIBE_EN]-> (Archivo)
+
+[EXECUTES]
+  Properties:
+    • categoria (string)
+    • processor_name (string)
+    • processor_type (string)
+  Connection Patterns:
+    • (ProcessGroup) -[EXECUTES]-> (Script)
+
+[LEE_DE]
+  Properties: None
+  Connection Patterns:
+    • (Clasificacion) -[LEE_DE]-> (Tabla)
+    • (ProcessGroup) -[LEE_DE]-> (Tabla)
+    • (Clasificacion) -[LEE_DE]-> (Archivo)
+    • (ProcessGroup) -[LEE_DE]-> (Archivo)
+
+[PREPARA]
+  Properties: None
+  Connection Patterns:
+    • (ProcessGroup) -[PREPARA]-> (Atlas Term)
+
+[PRODUCE]
+  Properties: None
+  Connection Patterns:
+    • (ProcessGroup) -[PRODUCE]-> (Kafka)
+
+[TIENE_CLASIFICACION]
+  Properties: None
+  Connection Patterns:
+    • (Atlas Term) -[TIENE_CLASIFICACION]-> (Clasificacion)

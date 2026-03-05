@@ -282,18 +282,6 @@ def build_graph(root_id: str, root_name: str, flow_index: FlowIndex, script_dir:
 
     driver.close()
 
-    # === CSV de Atlas Terms encontrados ===
-    try:
-        unique_terms = sorted({t for term_set in flow_index.terms_by_proc.values() for t in term_set})
-        csv_path = script_dir / "atlas_terms.csv"
-        with csv_path.open("w", encoding="utf-8", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["atlas_term"])
-            for term in unique_terms:
-                writer.writerow([term])
-        log.info("CSV de Atlas Terms generado: %s (%d terms)", csv_path, len(unique_terms))
-    except Exception as e:
-        log.error("Error al generar CSV de Atlas Terms: %s", e)
 
     log.info("Graph build complete")
     return counters

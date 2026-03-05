@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from sql_utils import SQLUtils
+from shared.sql_utils import SQLUtils
 
 SQL_STATEMENT_REGEX = re.compile(
     r"^\s*(select|insert|update|delete|merge|with)\s+.+\b(from|into|set|where)\b",
