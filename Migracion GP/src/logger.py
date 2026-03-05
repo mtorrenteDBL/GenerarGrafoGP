@@ -13,8 +13,10 @@ def setup_logger(name: str) -> logging.Logger:
     # Handlers
     stream_handler = logging.StreamHandler()
     stream_handler.setFormatter(formatter)
+    stream_handler.setLevel(LOGGING_LEVEL)
     file_handler = logging.FileHandler('pipeline.log', mode='a', encoding='utf-8')
     file_handler.setFormatter(formatter)
+    file_handler.setLevel(logging.DEBUG)  # File captures everything for debugging
 
     # Logger
     logger = logging.getLogger(name=name)
