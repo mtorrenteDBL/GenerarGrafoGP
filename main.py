@@ -19,6 +19,13 @@ from datetime import datetime
 from dotenv import load_dotenv
 from neo4j import GraphDatabase
 
+# Load environment configuration FIRST, before importing subproject modules
+env_file = Path(__file__).parent / ".env"
+if not env_file.exists():
+    print(f"ERROR: .env file not found at {env_file}")
+    sys.exit(1)
+load_dotenv(env_file, override=True)
+
 # Add subprojects to path
 sys.path.insert(0, str(Path(__file__).parent / "FlowToGraph"))
 sys.path.insert(0, str(Path(__file__).parent / "Migracion GP"))
@@ -50,15 +57,7 @@ log = logging.getLogger(__name__)
 
 
 def load_env_config() -> dict:
-    """Load and validate environment configuration from .env file."""
-    env_file = Path(__file__).parent / ".env"
-    
-    if not env_file.exists():
-        log.error(f"ERROR: .env file not found at {env_file}")
-        sys.exit(1)
-    
-    load_dotenv(env_file, override=True)
-    
+    """Validate environment configuration (already loaded by dotenv at startup)."""
     config = {
         "neo4j_host": os.getenv("NEO4J_HOST"),
         "neo4j_user": os.getenv("NEO4J_USER"),
