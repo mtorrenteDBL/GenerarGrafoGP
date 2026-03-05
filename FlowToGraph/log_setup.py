@@ -46,7 +46,7 @@ def setup_logging(name: str = "run", level: int = logging.INFO) -> Path:
 
     # File handler — always at DEBUG so nothing is lost on disk
     fh = logging.FileHandler(log_file, encoding="utf-8")
-    fh.setLevel(logging.DEBUG)
+    fh.setLevel(logging.INFO)
     fh.setFormatter(formatter)
 
     # Console handler — respects the requested level
@@ -55,7 +55,7 @@ def setup_logging(name: str = "run", level: int = logging.INFO) -> Path:
     ch.setFormatter(formatter)
 
     root = logging.getLogger()
-    root.setLevel(logging.DEBUG)   # handlers decide what to show/write
+    root.setLevel(logging.INFO)   # handlers decide what to show/write
     root.addHandler(fh)
     root.addHandler(ch)
 
