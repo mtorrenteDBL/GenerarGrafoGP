@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-FlowToGraph Pipeline - Fetch and process NiFi flows into Neo4j graph.
-
-This module can be run directly to fetch and process all flows,
-or imported to use its functions programmatically.
-"""
 from __future__ import annotations
 
 import argparse
@@ -65,9 +59,7 @@ def fetch_and_process_all_flows(cfg: Config, verbose: bool = False) -> bool:
     log.info("")
     log.info("=== Processing all flows ===")
     
-    # Flows are now in data/flows (relative to project root)
-    project_root = Path(__file__).resolve().parent.parent
-    flows_dir = project_root / "data" / "flows"
+    flows_dir = Path(__file__).resolve().parent / "flows"
     flow_files = list(flows_dir.glob("*.json")) + list(flows_dir.glob("*.xml"))
     
     if not flow_files:

@@ -2,27 +2,16 @@ import logging
 from .config import LOGGING_LEVEL
 
 def setup_logger(name: str) -> logging.Logger:
+    """Return a named logger that propagates to the root logger.
+    Logging setup (handlers, format, level) is handled centrally by the
+    root main.py orchestrator. When running standalone, a basic config
+    is applied if the root logger has no handlers yet.
+    """
+    if not logging.root.handlers:
+        # Standalone usage: apply minimal logging config
+        logging.basicConfig(
+            level=LOGGING_LEVEL,
+            format='%(asctime)s [%(levelname)-8s] %(name)s: %(message)s',
+        )
 
-    logging.getLogger('neo4j').setLevel(logging.ERROR)
-
-    # Formatters
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-
-    # Handlers
-    stream_handler = logging.StreamHandler()
-    stream_handler.setFormatter(formatter)
-    stream_handler.setLevel(LOGGING_LEVEL)
-    file_handler = logging.FileHandler('pipeline.log', mode='a', encoding='utf-8')
-    file_handler.setFormatter(formatter)
-    file_handler.setLevel(logging.DEBUG)  # File captures everything for debugging
-
-    # Logger
-    logger = logging.getLogger(name=name)
-    logger.setLevel(LOGGING_LEVEL)
-    logger.propagate = False
-    logger.addHandler(file_handler)
-    logger.addHandler(stream_handler)
-
-    return logger
+    return logging.getLogger(name)

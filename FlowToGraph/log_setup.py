@@ -34,7 +34,7 @@ def setup_logging(name: str = "run", level: int = logging.INFO) -> Path:
       - StreamHandler  → stdout, at *level*
       - FileHandler    → log/<timestamp>_<name>.log, always at DEBUG
 
-    Safe to call once per process. Returns the Path of the log file created.
+    Safe to call multiple times per process. Returns the Path of the log file created.
     """
     LOG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -46,7 +46,7 @@ def setup_logging(name: str = "run", level: int = logging.INFO) -> Path:
 
     # File handler — always at DEBUG so nothing is lost on disk
     fh = logging.FileHandler(log_file, encoding="utf-8")
-    fh.setLevel(logging.INFO)
+    fh.setLevel(logging.DEBUG)
     fh.setFormatter(formatter)
 
     # Console handler — respects the requested level
@@ -55,7 +55,12 @@ def setup_logging(name: str = "run", level: int = logging.INFO) -> Path:
     ch.setFormatter(formatter)
 
     root = logging.getLogger()
-    root.setLevel(logging.INFO)   # handlers decide what to show/write
+    root.setLevel(logging.DEBUG)   # handlers decide what to show/write
+
+    # Skip setup if root logger already has handlers (e.g. called from main.py orchestrator)
+    if root.handlers:
+        return log_file
+
     root.addHandler(fh)
     root.addHandler(ch)
 

@@ -193,7 +193,6 @@ def fetch_flow(cluster: dict, cfg: dict) -> bool:
 # ---------------------------------------------------------------------------
 
 def main():
-    setup_logging(name="fetch_flows")
     cfg = load_env()
     clusters = parse_clusters()
 
@@ -212,4 +211,5 @@ def main():
 
 
 if __name__ == "__main__":
+    setup_logging(name="fetch_flows")
     main()
