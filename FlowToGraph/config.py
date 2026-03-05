@@ -181,12 +181,18 @@ class Config:
     @classmethod
     def from_args(cls, args: Any) -> Config:
         """Create a Config from parsed command-line arguments."""
+        # Handle None values by using defaults
+        allowed_rels = getattr(args, 'allowed_rels', None) or ",".join(sorted(DEFAULT_ALLOWED))
+        not_allowed_rels = getattr(args, 'not_allowed_rels', None) or ",".join(sorted(DEFAULT_NOT_ALLOWED))
+        logging_name_regex = getattr(args, 'logging_name_regex', None) or DEFAULT_LOGGING_NAME_REGEX
+        logging_types = getattr(args, 'logging_types', None) or ",".join(sorted(DEFAULT_LOGGING_TYPES))
+        
         return cls(
             enforce_allowed=not bool(getattr(args, 'no_enforce_allowed', False)),
-            allowed_set={s.strip().lower() for s in args.allowed_rels.split(",") if s.strip()},
-            not_allowed_set={s.strip().lower() for s in args.not_allowed_rels.split(",") if s.strip()},
-            logging_name_regex=re.compile(args.logging_name_regex, re.IGNORECASE),
-            logging_type_set={s.strip() for s in args.logging_types.split(",") if s.strip()},
+            allowed_set={s.strip().lower() for s in allowed_rels.split(",") if s.strip()},
+            not_allowed_set={s.strip().lower() for s in not_allowed_rels.split(",") if s.strip()},
+            logging_name_regex=re.compile(logging_name_regex, re.IGNORECASE),
+            logging_type_set={s.strip() for s in logging_types.split(",") if s.strip()},
             stop_on_ua_override=bool(getattr(args, 'stop_on_ua_override', False)),
         )
 

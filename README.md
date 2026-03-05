@@ -126,7 +126,10 @@ cd "Migracion GP" && uv run python atlas_migration.py
 
 The FlowToGraph subproject is now **self-contained** and can run independently:
 
-### Default Moflow_pipeline.py
+### Default Mode (Fetch All Flows)
+```bash
+cd FlowToGraph
+uv run python flow_pipeline.py
 ```
 This will:
 1. Fetch all flows from remote clusters (via SSH)
@@ -135,41 +138,53 @@ This will:
 ### Single Flow Mode (Legacy)
 ```bash
 cd FlowToGraph
-uv run python flow_pipelinede (Legacy)
-Copy `.env.example` to `.env` and configure:
-
-```env
-# Neo4j Configuration
-NEO4J_HOST=bolt://localhost:7687
-NEO4J_USER=neo4j
-NEO4J_PASS=your_password
-
-# SSH Configuration (for FlowToGraph)
-SSH_USER=your_username
-SSH_PASSWORD=your_password          # Optional if using key auth
-SSH_KEY_PATH=/path/to/private_key   # Optional if using password auth
-SSH_PORT=22                         # Optional, defaults to 22
+uv run python flow_pipeline.py --flow ../data/flows/my_flow.json --root-name My_Flow
 ```
+
+## Configuration
+
+### Environment Setup
+
+1. **Copy the example environment file**:
+   ```bash
+   cp .env.example .env
+   ```
+
+2. **Configure your environment variables**:
+   ```env
+   # Neo4j Configuration
+   NEO4J_HOST=bolt://localhost:7687
+   NEO4J_USER=neo4j
+   NEO4J_PASS=your_password
+
+   # SSH Configuration (for FlowToGraph)
+   SSH_USER=your_username
+   SSH_PASSWORD=your_password          # Optional if using key auth
+   SSH_KEY_PATH=/path/to/private_key   # Optional if using password auth
+   SSH_PORT=22                         # Optional, defaults to 22
+   ```
 
 **Important**: Environment variables are loaded once in `main.py` and shared across all subprojects.
 
-### Data Files
+### Data Files Setup
 
 All data files are stored in the `data/` directory:
 
 - **`data/atlas_terms.csv`**: List of Atlas terms to migrate
-- **`data/info_clusters.csv`**: NiFi cluster configurations for SSH access
-- **`data/flows/`**: Downloaded NiFi flow files (auto-populated by fetch_flows)eo4j Configuration
-NEO4J_HOST=bolt://localhost:7687
-NEO4J_USER=neo4j
-NEO4J_PASS=password
+- **`data/info_clusters.csv`**: NiFi cluster SSH configurations
+- **`data/flows/`**: Downloaded NiFi flow files (auto-populated by fetch_flows)
 
-# SSH Configuration (for FlowToGraph)
-SSH_USER=your_username
-SSH_PASSWORD=your_password          # Optional if using key auth
-SSH_KEY_PATH=/path/to/private_key   # Optional if using password auth
-SSH_PORT=22                         # Optional, defaults to 22
+**First-time setup or migration**:
+```bash
+# Run the setup helper script to check/migrate data files
+bash setup_data.sh
 ```
+
+This script will:
+- Check if the `data/` directory exists
+- Migrate CSV files from old locations (FlowToGraph/, Migracion GP/) if found
+- Verify required data files are present
+- Create the flows directory if needed
 
 ### Dependencies
 
@@ -249,10 +264,36 @@ ssh -i $SSH_KEY_PATH $SSH_USER@<cluster-ip>
 Ensure data files are in the correct location:
 ```
 data/
-├── atlas_terms.csv
-├── info_clusters.csv
-└── flows/  (auto-populated)
+├── atlas_terms.csv      # Required for Migracion GP
+├── info_clusters.csv    # Required for FlowToGraph SSH fetching
+└── flows/               # Auto-populated by fetch_flows
 ```
+
+**If you're migrating from an older version** or setting up for the first time:
+
+1. Run the setup helper script:
+   ```bash
+   bash setup_data.sh
+   ```
+
+2. The script will automatically:
+   - Migrate `FlowToGraph/info_clusters.csv` → `data/info_clusters.csv`
+   - Migrate `Migracion GP/atlas_terms.csv` → `data/atlas_terms.csv`
+   - Create the `data/flows/` directory
+   - Verify all required files are present
+
+3. If files are still missing, manually create them:
+   ```bash
+   mkdir -p data/flows
+   # Copy your CSV files to data/
+   cp /path/to/your/atlas_terms.csv data/
+   cp /path/to/your/info_clusters.csv data/
+   ```
+
+**On production servers** (e.g., `/opt/GenerarGrafoGP/`):
+- Ensure the `data/` directory exists with proper permissions
+- Verify CSV files are present before running the pipeline
+- Check log files if errors occur: `log/orchestrator_*.log`
 
 ## Future Enhancements
 
