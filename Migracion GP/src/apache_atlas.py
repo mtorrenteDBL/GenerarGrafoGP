@@ -49,7 +49,7 @@ class Atlas:
                 # Promote the winner to the front
                 if i != 0:
                     self.urls.insert(0, self.urls.pop(i))
-                    logger.debug("Promoted Atlas URL to front: %s", url)
+                    logger.info("Promoted Atlas URL to front: %s", url)
                 return resp
             except Exception as e:
                 # Demote the failing URL to the back

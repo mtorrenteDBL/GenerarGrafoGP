@@ -18,6 +18,7 @@ import smtplib
 import traceback
 from enum import Enum
 from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
@@ -222,6 +223,103 @@ class ErrorLevel(Enum):
 # Email
 # ---------------------------------------------------------------------------
 
+class SMTPConnection:
+    """Reusable SMTP connection with optional TLS and auto-reconnect on failure.
+
+    All parameters are read from environment variables when not supplied:
+        SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD,
+        SMTP_TLS (true/false, default false),
+        EMAIL_FROM, EMAIL_TO (comma-separated).
+    """
+
+    def __init__(self, host, username, password, sender_email,
+                 receiver_emails: list | None = None, port=587, tls=False):
+        self.host = host
+        self.port = port
+        self.username = username
+        self.password = password
+        self.sender_email = sender_email
+        self.receiver_emails = receiver_emails
+        self.server = None
+        self.retries = 0
+        self.tls = tls
+
+    def initialize_server(self):
+        self.server = smtplib.SMTP(self.host, self.port)
+        if self.tls:
+            try:
+                self.server.starttls()
+            except Exception as e:
+                log.error("Error starting TLS: %s", e)
+        self.server.login(self.username, self.password)
+
+    def disconnect(self):
+        if self.server is not None:
+            self.server.quit()
+            self.server = None
+
+    def send_email(self, subject: str, body: str,
+                   recipient_emails: list | None = None, html_type=False):
+        try:
+            if self.server is None:
+                self.initialize_server()
+            recipients = recipient_emails or self.receiver_emails
+
+            msg = MIMEMultipart()
+            msg["From"]    = self.sender_email
+            msg["To"]      = ", ".join(recipients)
+            msg["Subject"] = subject
+            msg.attach(MIMEText(body, "html" if html_type else "plain", "utf-8"))
+
+            self.server.sendmail(self.sender_email, recipients, msg.as_string())
+            log.info("Email sent to: %s", ", ".join(recipients))
+            self.retries = 0
+
+        except Exception as exc:
+            log.error("Error sending email: %s", exc)
+            log.debug(traceback.format_exc())
+            if self.retries == 0:
+                self.retries += 1
+                self.initialize_server()
+                self.send_email(subject, body, recipient_emails, html_type)
+            else:
+                self.retries = 0
+                log.warning("Failed to send email after retry: %s", exc)
+
+
+def _build_smtp_connection() -> SMTPConnection | None:
+    """Instantiate an SMTPConnection from environment variables, or return None
+    if any required variable is missing."""
+    host      = os.getenv("SMTP_HOST")
+    port      = int(os.getenv("SMTP_PORT", "587"))
+    username  = os.getenv("SMTP_USERNAME")
+    password  = os.getenv("SMTP_PASSWORD")
+    tls       = os.getenv("SMTP_TLS", "false").strip().lower() == "true"
+    sender    = os.getenv("EMAIL_FROM")
+    receivers = [a.strip() for a in os.getenv("EMAIL_TO", "").split(",") if a.strip()]
+
+    if not all([host, username, password, sender, receivers]):
+        log.warning("Email notification skipped: missing SMTP/email environment variables.")
+        return None
+
+    return SMTPConnection(
+        host=host, port=port, username=username, password=password,
+        sender_email=sender, receiver_emails=receivers, tls=tls,
+    )
+
+
+def _send_email(subject: str, body: str) -> None:
+    """Build a one-shot SMTP connection and send a single email."""
+    conn = _build_smtp_connection()
+    if conn is None:
+        return
+    try:
+        conn.initialize_server()
+        conn.send_email(subject, body)
+    finally:
+        conn.disconnect()
+
+
 def send_summary_email(
     flow_result: dict,
     flow_success: bool,
@@ -291,38 +389,6 @@ def send_crash_email(exc: BaseException) -> None:
     ]
 
     _send_email(subject, "\n".join(body_lines))
-
-
-def _send_email(subject: str, body: str) -> None:
-    """Low-level helper: build and dispatch one email via STARTTLS SMTP.
-
-    All credentials are read from environment variables. Errors are logged
-    as warnings so they never crash the caller.
-    """
-    smtp_host = os.getenv("SMTP_HOST")
-    smtp_port = int(os.getenv("SMTP_PORT", "587"))
-    smtp_user = os.getenv("SMTP_USERNAME")
-    smtp_pass = os.getenv("SMTP_PASSWORD")
-    email_from = os.getenv("EMAIL_FROM")
-    email_to = [a.strip() for a in os.getenv("EMAIL_TO", "").split(",") if a.strip()]
-
-    if not all([smtp_host, smtp_user, smtp_pass, email_from, email_to]):
-        log.warning("Email notification skipped: missing SMTP/email environment variables.")
-        return
-
-    msg = MIMEText(body, "plain", "utf-8")
-    msg["Subject"] = subject
-    msg["From"]    = email_from
-    msg["To"]      = ", ".join(email_to)
-
-    try:
-        with smtplib.SMTP(smtp_host, smtp_port) as server:
-            server.starttls()
-            server.login(smtp_user, smtp_pass)
-            server.sendmail(email_from, email_to, msg.as_string())
-        log.info("Email sent to: %s", ", ".join(email_to))
-    except Exception as send_exc:
-        log.warning("Failed to send email: %s", send_exc)
 
 
 # ---------------------------------------------------------------------------
