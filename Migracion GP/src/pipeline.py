@@ -1,6 +1,7 @@
 import csv
 import logging
 import json
+import os
 
 from glob import glob
 from pathlib import Path
@@ -140,16 +141,23 @@ class PipelineRunner:
         else:
             logger.warning("No lineage found for any term.")
 
-    def run_load_mode(self, terms: List[str], neo4j_config: dict, delete_all: bool = False):
-        """Extracts and Loads directly to Neo4j."""
+    def run_load_mode(self, terms: List[str], neo4j_config: dict, delete_all: bool = False) -> dict:
+        """Extracts and Loads directly to Neo4j.
+
+        Returns a dict with three keys:
+            ok        – terms loaded successfully
+            not_found – terms not found in Atlas or GitLab
+            failed    – terms that raised an exception during processing
+        """
         loader = Neo4jLoader(**neo4j_config)
 
         if delete_all:
             loader.delete_all()
-        
+
         if not neo4j_config.get('no_constraints'):
             loader.ensure_constraints()
 
+        results = {"ok": [], "not_found": [], "failed": []}
         total = len(terms)
         for i, term in enumerate(terms, 1):
 
@@ -161,27 +169,60 @@ class PipelineRunner:
                 display_name, entity, guid, origin = self.search_term(term)
                 if not entity:
                     logger.warning('Term not found neither in Atlas or GitLab.')
+                    results["not_found"].append(term)
                     continue
-                
+
                 # Realizar la extracción
                 extraction = self.extractor.process_atlas_term(display_name, entity)
 
                 term_data = {
-                    "term": term, 
-                    "guid": guid, 
+                    "term": term,
+                    "guid": guid,
                     "glossary": None,
                     'origin': origin
                 }
 
-                # 3. Load (convert to dict for backward compatibility)
+                # Load (convert to dict for backward compatibility)
                 loader.load_term_lineage(term_data, extraction.rows)
 
-                if (rows_amount := len(extraction.rows)) == 0:
+                if len(extraction.rows) == 0:
                     logger.warning(f"No loaded rows.")
                 else:
                     logger.info(f"Loaded {len(extraction.rows)} rows.")
 
+                results["ok"].append(term)
+
             except Exception as e:
                 logger.error(f"[{i}/{total}] Error processing {term}: {e}")
-        
+                results["failed"].append(term)
+
         loader.close()
+        return results
+
+
+def run_migration(csv_path) -> dict:
+    """High-level entry point: load terms from *csv_path* and push to Neo4j.
+
+    Neo4j connection details are read from the environment variables
+    NEO4J_HOST, NEO4J_USER, and NEO4J_PASS.
+
+    Returns the same dict as :meth:`PipelineRunner.run_load_mode`::
+
+        {
+            "ok":        [...],   # terms loaded successfully
+            "not_found": [...],   # terms not found in Atlas or GitLab
+            "failed":    [...],   # terms that raised an exception
+        }
+    """
+    runner = PipelineRunner(str(csv_path))
+    terms = runner.get_terms()
+
+    logger.info(f"Processing {len(terms)} Atlas terms")
+
+    neo4j_config = {
+        "uri":      os.getenv("NEO4J_HOST"),
+        "user":     os.getenv("NEO4J_USER"),
+        "password": os.getenv("NEO4J_PASS"),
+    }
+
+    return runner.run_load_mode(terms, neo4j_config, delete_all=False)

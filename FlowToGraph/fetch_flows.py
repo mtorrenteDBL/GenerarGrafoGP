@@ -121,10 +121,17 @@ def fetch_flow(cluster: dict, cfg: dict) -> bool:
       - JSON-capable clusters: flow.json > flow.json.gz > flow.xml > flow.xml.gz
       - XML-only clusters:     flow.xml > flow.xml.gz
     Files saved flat into OUTPUT_DIR/<cluster_name>.<ext>.
+
+    If the fetch succeeds the previous file for this cluster is replaced.
+    If the fetch fails the existing file is left untouched.
+
     Returns True on success.
     """
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     safe_name = cluster["name"].replace(" ", "_")
+
+    # Snapshot existing files for this cluster so we can replace them on success.
+    existing_files: list[Path] = list(OUTPUT_DIR.glob(f"{safe_name}.*"))
 
     if cluster["supports_json"]:
         candidates = [
@@ -173,6 +180,15 @@ def fetch_flow(cluster: dict, cfg: dict) -> bool:
                     continue
 
                 log.info("  ✔ Saved %s (%d bytes)", local_path, final_size)
+
+                # Replace succeeded — remove any old file(s) for this cluster
+                # that differ from the newly written one (e.g. old .xml when
+                # the cluster now provides .json).
+                for old in existing_files:
+                    if old.resolve() != local_path.resolve():
+                        old.unlink(missing_ok=True)
+                        log.info("  ↳ Removed previous version: %s", old.name)
+
                 return True
 
             log.warning("  ✘ No flow file found at %s", cluster["path"])
@@ -208,6 +224,8 @@ def main():
     print(f"  ✔ Success ({len(results['ok'])}): {', '.join(results['ok']) or '—'}")
     print(f"  ✘ Failed  ({len(results['fail'])}): {', '.join(results['fail']) or '—'}")
     print("=" * 60)
+
+    return results
 
 
 if __name__ == "__main__":

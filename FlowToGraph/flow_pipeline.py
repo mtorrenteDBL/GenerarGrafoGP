@@ -47,67 +47,86 @@ def process_single_flow(flow_path: Path, root_name: str | None, cfg: Config) -> 
     return counters
 
 
-def fetch_and_process_all_flows(cfg: Config, verbose: bool = False) -> bool:
+def fetch_and_process_all_flows(cfg: Config, verbose: bool = False) -> dict:
     """
     Fetch flows from remote clusters and process all of them.
-    Returns True if all flows processed successfully.
+
+    Returns a dict with four keys:
+        fetch_ok    – cluster names successfully retrieved this run
+        fetch_fail  – cluster names that could not be retrieved this run
+        process_ok  – flow file names processed successfully
+        process_fail – flow file names that failed processing
+
+    Only flow files that were **both** fetched successfully in this run
+    **and** processed successfully are deleted from disk; all others are kept
+    so they can be inspected or retried later.
     """
-    # Import fetch_flows
     from fetch_flows import main as fetch_flows_main
-    
+
+    _empty = {"fetch_ok": [], "fetch_fail": [], "process_ok": [], "process_fail": []}
+
     log.info("=== Fetching flows from remote clusters ===")
     try:
-        fetch_flows_main()
+        fetch_results = fetch_flows_main()
     except Exception as e:
         log.error(f"Failed to fetch flows: {e}", exc_info=verbose)
-        return False
-    
+        return _empty
+
     log.info("")
     log.info("=== Processing all flows ===")
-    
-    # Flows are now in data/flows (relative to project root)
+
     project_root = Path(__file__).resolve().parent.parent
     flows_dir = project_root / "data" / "flows"
     flow_files = list(flows_dir.glob("*.json")) + list(flows_dir.glob("*.xml"))
-    
+
     if not flow_files:
         log.error(f"No flow files found in {flows_dir}")
-        return False
-    
-    failed_flows = []
-    
+        return {
+            "fetch_ok": fetch_results.get("ok", []),
+            "fetch_fail": fetch_results.get("fail", []),
+            "process_ok": [],
+            "process_fail": [],
+        }
+
+    process_ok: list[str] = []
+    process_fail: list[str] = []
+
     for flow_file in flow_files:
         flow_name = flow_file.name
-        
+
         # Skip empty files
         if flow_file.stat().st_size == 0:
             log.warning(f"--- Skipping: {flow_name} (empty file) ---")
-            failed_flows.append(flow_name)
+            process_fail.append(flow_name)
             continue
-        
+
         log.info("")
         log.info(f"--- Processing: {flow_name} ---")
-        
+
         try:
             counters = process_single_flow(flow_file, flow_file.stem, cfg)
             log.info(f"✔ {flow_name} processed successfully")
-            
-            # Print summary for this flow
-            log.info("  ProcessGroups: %s, Atlas Terms: %s, Kafka nodes: %s, Tables: %s", 
-                    counters['pg_nodes'], counters['atlas_nodes'], 
-                    counters['kafka_nodes'], counters['tabla_nodes'])
-            
+            log.info("  ProcessGroups: %s, Atlas Terms: %s, Kafka nodes: %s, Tables: %s",
+                     counters['pg_nodes'], counters['atlas_nodes'],
+                     counters['kafka_nodes'], counters['tabla_nodes'])
+            process_ok.append(flow_name)
+
         except Exception as e:
             log.error(f"✘ {flow_name} failed: {e}", exc_info=verbose)
-            failed_flows.append(flow_name)
-    
+            process_fail.append(flow_name)
+
     log.info("")
-    if failed_flows:
-        log.warning(f"=== Warning: {len(failed_flows)} flow(s) failed: {', '.join(failed_flows)} ===")
-        return False
+    if process_fail:
+        log.warning(f"=== Warning: {len(process_fail)} flow(s) failed processing: {', '.join(process_fail)} ===")
     else:
         log.info("=== All flows processed successfully ===")
-        return True
+
+    return {
+        "fetch_ok": fetch_results.get("ok", []),
+        "fetch_fail": fetch_results.get("fail", []),
+        "process_ok": process_ok,
+        "process_fail": process_fail,
+    }
 
 
 def main():
@@ -180,9 +199,21 @@ def main():
     else:
         # Default mode: fetch all flows and process them
         log.info("=== Fetch-all mode (default) ===")
-        success = fetch_and_process_all_flows(cfg, args.verbose)
-        if not success:
-            log.error("Pipeline failed!")
+        result = fetch_and_process_all_flows(cfg, args.verbose)
+        fetch_ok = result["fetch_ok"]
+        fetch_fail = result["fetch_fail"]
+        process_ok = result["process_ok"]
+        process_fail = result["process_fail"]
+
+        log.info("")
+        log.info("==== SUMMARY ====")
+        log.info("Fetched successfully  (%d): %s", len(fetch_ok), ", ".join(fetch_ok) or "—")
+        log.info("Fetch failed          (%d): %s", len(fetch_fail), ", ".join(fetch_fail) or "—")
+        log.info("Processed successfully(%d): %s", len(process_ok), ", ".join(process_ok) or "—")
+        log.info("Processing failed     (%d): %s", len(process_fail), ", ".join(process_fail) or "—")
+
+        if fetch_fail or process_fail:
+            log.error("Pipeline completed with errors!")
             sys.exit(1)
         log.info("Pipeline completed successfully!")
 
