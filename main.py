@@ -196,6 +196,12 @@ _WARN_THRESHOLD     = 0.05   # Atlas term failure rate > 5%  → WARNING
 _ERROR_THRESHOLD    = 0.15   # Atlas term failure rate > 15% → ERROR
 _CRITICAL_THRESHOLD = 0.30   # Atlas term failure rate > 30% → CRITICAL
 
+# Unicode symbols
+_EM_DASH = "—"
+_CHECK   = "✔"
+_CROSS   = "✘"
+_WARN    = "⚠"
+
 
 class ErrorLevel(Enum):
     NO_ERROR = 0
@@ -205,10 +211,10 @@ class ErrorLevel(Enum):
 
     def label(self) -> str:
         return {
-            ErrorLevel.NO_ERROR: "✔ NO ERROR",
-            ErrorLevel.WARNING:  "⚠ WARNING",
-            ErrorLevel.ERROR:    "✘ ERROR",
-            ErrorLevel.CRITICAL: "✘ CRITICAL ERROR",
+            ErrorLevel.NO_ERROR: f"{_CHECK} NO ERROR",
+            ErrorLevel.WARNING:  f"{_WARN} WARNING",
+            ErrorLevel.ERROR:    f"{_CROSS} ERROR",
+            ErrorLevel.CRITICAL: f"{_CROSS} CRITICAL ERROR",
         }[self]
 
 
@@ -239,7 +245,7 @@ def send_summary_email(
     mg_not_found      = migration_result.get("not_found", [])
     mg_failed         = migration_result.get("failed", [])
 
-    subject = f"[GenerarGrafoPetersen] {error_level.label()} \u2014 {timestamp}"
+    subject = f"[GenerarGrafoPetersen] {error_level.label()} {_EM_DASH} {timestamp}"
 
     body_lines = [
         f"GenerarGrafoPetersen pipeline run: {timestamp}",
@@ -247,17 +253,17 @@ def send_summary_email(
         "",
         "=" * 60,
         "FlowToGraph:",
-        f"  Retrieved successfully   ({len(flow_fetch_ok)}): {', '.join(flow_fetch_ok) or '\u2014'}",
-        f"  Retrieval failed         ({len(flow_fetch_fail)}): {', '.join(flow_fetch_fail) or '\u2014'}",
-        f"  Processed successfully   ({len(flow_process_ok)}): {', '.join(flow_process_ok) or '\u2014'}",
-        f"  Processing failed        ({len(flow_process_fail)}): {', '.join(flow_process_fail) or '\u2014'}",
-        f"  Overall: {'\u2714 SUCCESS' if flow_success else '\u2718 FAILED'}",
+        f"  Retrieved successfully   ({len(flow_fetch_ok)}): {', '.join(flow_fetch_ok) or _EM_DASH}",
+        f"  Retrieval failed         ({len(flow_fetch_fail)}): {', '.join(flow_fetch_fail) or _EM_DASH}",
+        f"  Processed successfully   ({len(flow_process_ok)}): {', '.join(flow_process_ok) or _EM_DASH}",
+        f"  Processing failed        ({len(flow_process_fail)}): {', '.join(flow_process_fail) or _EM_DASH}",
+        f"  Overall: {_CHECK + ' SUCCESS' if flow_success else _CROSS + ' FAILED'}",
         "",
         "Migracion GP:",
         f"  Loaded successfully      ({len(mg_ok)})",
         f"  Not found                ({len(mg_not_found)})",
-        f"  Failed                   ({len(mg_failed)}): {', '.join(mg_failed) or '\u2014'}",
-        f"  Overall: {'\u2714 SUCCESS' if migration_success else '\u2718 FAILED'}",
+        f"  Failed                   ({len(mg_failed)}): {', '.join(mg_failed) or _EM_DASH}",
+        f"  Overall: {_CHECK + ' SUCCESS' if migration_success else _CROSS + ' FAILED'}",
         "=" * 60,
         "",
         f"Log file: {log_file}",
@@ -268,7 +274,7 @@ def send_summary_email(
 
 def send_crash_email(exc: BaseException) -> None:
     """Send a critical-error email when an uncaught exception terminates the orchestrator."""
-    subject = f"[GenerarGrafoPetersen] \u2718 CRITICAL ERROR \u2014 {timestamp}"
+    subject = f"[GenerarGrafoPetersen] {_CROSS} CRITICAL ERROR {_EM_DASH} {timestamp}"
 
     body_lines = [
         f"GenerarGrafoPetersen pipeline run: {timestamp}",
