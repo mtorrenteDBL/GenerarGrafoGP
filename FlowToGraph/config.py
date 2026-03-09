@@ -120,6 +120,13 @@ MATCH (at:`Atlas Term` {nombre: $nombre})
 MERGE (pg)-[:PREPARA]->(at)
 """
 
+# Atlas Term -> Kafka (PUBLICA_EN) via directed BFS path
+MERGE_REL_ATLAS_PUBLICA_EN_KAFKA = """
+MATCH (at:`Atlas Term` {nombre: $nombre})
+MATCH (k:Kafka {topic: $topic, role: 'PRODUCE', pg_id: $pg_id, flow_name: $flow_name})
+MERGE (at)-[:PUBLICA_EN]->(k)
+"""
+
 # PG -> Kafka (PRODUCE)  | Nodo Kafka por (topic, role, pg_id, flow_name)
 MERGE_KAFKA_AND_LINK_PRODUCE = """
 MATCH (pg:ProcessGroup {nifi_id: $pg_id, flow_name: $flow_name})

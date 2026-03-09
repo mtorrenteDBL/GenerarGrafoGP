@@ -13,6 +13,7 @@ Designed to be run via: bash /opt/GenerarGrafoGP/main.sh
 
 import os
 import sys
+import atexit
 import logging
 import smtplib
 import traceback
@@ -48,14 +49,36 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 log_file = LOG_DIR / f"orchestrator_{timestamp}.log"
 
+# Create file handler with explicit encoding and flush
+file_handler = logging.FileHandler(log_file, encoding='utf-8')
+file_handler.setLevel(logging.DEBUG)
+file_handler.flush()
+
+# Create stream handler for console
+stream_handler = logging.StreamHandler(sys.stdout)
+stream_handler.setLevel(logging.INFO)
+
+# Configure formatter
+formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+file_handler.setFormatter(formatter)
+stream_handler.setFormatter(formatter)
+
+# Configure root logger
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[
-        logging.FileHandler(log_file),
-        logging.StreamHandler(sys.stdout)
-    ]
+    level=logging.DEBUG,
+    handlers=[file_handler, stream_handler]
 )
+
+# Ensure logs are flushed on exit
+def _flush_logs():
+    """Flush all logging handlers before exit."""
+    for handler in logging.root.handlers:
+        handler.flush()
+        if hasattr(handler, 'close'):
+            handler.close()
+
+atexit.register(_flush_logs)
+logging.shutdown = lambda: _flush_logs()
 
 
 log = logging.getLogger(__name__)

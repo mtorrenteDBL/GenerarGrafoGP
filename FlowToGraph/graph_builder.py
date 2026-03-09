@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import csv
 import logging
+from collections import defaultdict, deque
 from pathlib import Path
-from collections import defaultdict
 from typing import TYPE_CHECKING
 
 from neo4j import GraphDatabase
 from config import (
     NEO4J_URI, NEO4J_USER, NEO4J_PASS,
+    Config,
     MERGE_PG, MERGE_REL_PG_CHILD, MERGE_ATLAS_TERM, MERGE_REL_PG_ATLAS,
+    MERGE_REL_ATLAS_PUBLICA_EN_KAFKA,
     MERGE_KAFKA_AND_LINK_PRODUCE, MERGE_KAFKA_AND_LINK_CONSUME,
     MERGE_REL_ENVIA_A,
     MERGE_ARCHIVO, MERGE_REL_PG_ESCRIBE_ARCHIVO, MERGE_REL_PG_LEE_ARCHIVO,
@@ -98,7 +100,7 @@ def _extract_zona_from_path(path: str) -> str | None:
     return None
 
 
-def build_graph(root_id: str, root_name: str, flow_index: FlowIndex, script_dir: Path) -> dict[str, int]:
+def build_graph(root_id: str, root_name: str, flow_index: FlowIndex, script_dir: Path, cfg: Config | None = None) -> dict[str, int]:
     """
     Build the graph in Neo4j from parsed NiFi flow data.
     
@@ -127,11 +129,13 @@ def build_graph(root_id: str, root_name: str, flow_index: FlowIndex, script_dir:
 
     driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASS))
     log.debug("Connected to Neo4j at %s", NEO4J_URI)
+    _cfg = cfg or Config()
     counters = {
         "pg_nodes": 0, "pg_rels": 0,
         "atlas_nodes": 0, "atlas_rels": 0,
         "kafka_nodes": 0, "kafka_rels": 0,
         "envia_a_rels": 0,
+        "atlas_kafka_rels": 0,
         "archivo_nodes": 0, "escribe_rels": 0, "lee_rels": 0,
         "tabla_nodes": 0, "alimenta_rels": 0, "lee_tabla_rels": 0, "escribe_tabla_rels": 0,
         "script_nodes": 0, "executes_rels": 0
@@ -215,7 +219,54 @@ def build_graph(root_id: str, root_name: str, flow_index: FlowIndex, script_dir:
                             src_flow=root_name, dst_flow=root_name):
                         counters["envia_a_rels"] += 1
 
-        # 5) Archivos: nodos y relaciones ESCRIBE_EN / LEE_DE
+        # 5) Atlas -> Kafka (PUBLICA_EN) con camino dirigido válido
+        for ua_proc, terms in flow_index.terms_by_proc.items():
+            visited: set[str] = {ua_proc}
+            q: deque[str] = deque([ua_proc])
+            reachable_publishers: set[str] = set()
+
+            while q:
+                cur = q.popleft()
+
+                if cur in flow_index.publish_ids:
+                    reachable_publishers.add(cur)
+
+                for nxt in flow_index.fwd_adj.get(cur, []):
+                    if nxt in visited:
+                        continue
+                    if nxt in flow_index.consume_ids:      # no transitar consumidores
+                        continue
+                    if nxt in flow_index.logging_ids:       # evitar logging
+                        continue
+                    if nxt in flow_index.deletes_atlas_ids:  # si borra atlas_term, cortamos
+                        continue
+                    if _cfg.stop_on_ua_override and nxt in flow_index.ua_ids and nxt != ua_proc:
+                        continue
+                    visited.add(nxt)
+                    q.append(nxt)
+
+            if not reachable_publishers:
+                continue
+
+            for pub_proc in reachable_publishers:
+                pub_pg = flow_index.proc_to_pg.get(pub_proc)
+                if not pub_pg:
+                    continue
+                gid = flow_index.kafka_group_id_by_proc.get(pub_proc)
+                for topic in flow_index.publish_topics_by_proc.get(pub_proc, []):
+                    # Ensure the Kafka node exists before linking
+                    _run(session, MERGE_KAFKA_AND_LINK_PRODUCE,
+                         f"PRODUCE/{topic}",
+                         pg_id=pub_pg, topic=topic, role="PRODUCE",
+                         group_id=gid, flow_name=root_name)
+                    for term in terms:
+                        if _run(session, MERGE_REL_ATLAS_PUBLICA_EN_KAFKA,
+                                f"PUBLICA_EN/{term}/{topic}",
+                                nombre=term, topic=topic, pg_id=pub_pg,
+                                flow_name=root_name):
+                            counters["atlas_kafka_rels"] += 1
+
+        # 6) Archivos: nodos y relaciones ESCRIBE_EN / LEE_DE
         for pid, paths in flow_index.write_paths_by_proc.items():
             pg = flow_index.proc_to_pg.get(pid)
             if not pg:
@@ -238,7 +289,7 @@ def build_graph(root_id: str, root_name: str, flow_index: FlowIndex, script_dir:
                         pg_id=pg, flow_name=root_name, path=path):
                     counters["lee_rels"] += 1
 
-        # 6) Tablas from SQL: nodos Tabla y relaciones LEE_DE / ESCRIBE_EN / ALIMENTA_A
+        # 7) Tablas from SQL: nodos Tabla y relaciones LEE_DE / ESCRIBE_EN / ALIMENTA_A
         all_pg_ids = set(flow_index.sql_sources_by_pg) | set(flow_index.sql_destination_by_pg)
         for pg_id in all_pg_ids:
             sources = flow_index.sql_sources_by_pg.get(pg_id, set())
@@ -266,7 +317,7 @@ def build_graph(root_id: str, root_name: str, flow_index: FlowIndex, script_dir:
                                         into_clave=dest.clave):
                         counters["alimenta_rels"] += 1
 
-        # 7) Scripts: nodos Script y relaciones EXECUTES (PG->Script)
+        # 8) Scripts: nodos Script y relaciones EXECUTES (PG->Script)
         for pg_id, refs in flow_index.script_refs_by_pg.items():
             for ref in refs:
                 clave = f"{ref.ref_type}::{ref.value[:200]}"

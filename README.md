@@ -77,14 +77,24 @@ GenerarGrafoPetersen/
 
 ### Production (Linux/Server)
 
+**Important:** Do NOT redirect stdout/stderr at the shell level. Python's logging is configured to write timestamped log files automatically.
+
 ```bash
-cd /opt/GenerarGrafoGP && bash /opt/GenerarGrafoGP/reset_and_run.sh > /opt/GenerarGrafoGP/log/cron.log 2>&1
+cd /opt/GenerarGrafoGP && bash /opt/GenerarGrafoGP/reset_and_run.sh
 ```
 
-Or with the new direct launcher:
+Or directly:
 
 ```bash
-cd /opt/GenerarGrafoGP && bash /opt/GenerarGrafoGP/main.sh > /opt/GenerarGrafoGP/log/cron.log 2>&1
+cd /opt/GenerarGrafoGP && bash /opt/GenerarGrafoGP/main.sh
+```
+
+Logs will be written to: `log/orchestrator_YYYYMMDD_HHMMSS.log`
+
+**For cron jobs:** If you want to capture only the exit code (and email notifications), use `2>/dev/null` to suppress debug output:
+
+```bash
+cd /opt/GenerarGrafoGP && bash /opt/GenerarGrafoGP/reset_and_run.sh 2>/dev/null
 ```
 
 ### Local Development
@@ -219,11 +229,13 @@ from shared.sql_utils import SQLUtils
 
 ### For CI/CD Pipelines
 
-No changes needed! The existing cron command continues to work:
+Use the updated cron command without shell redirection:
 
 ```bash
-cd /opt/GenerarGrafoGP && bash /opt/GenerarGrafoGP/reset_and_run.sh > /opt/GenerarGrafoGP/log/cron.log 2>&1
+cd /opt/GenerarGrafoGP && bash /opt/GenerarGrafoGP/reset_and_run.sh
 ```
+
+Logs are automatically written to `log/orchestrator_YYYYMMDD_HHMMSS.log` by Python's logging.
 
 ## Benefits
 

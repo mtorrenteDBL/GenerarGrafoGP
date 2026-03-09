@@ -42,7 +42,7 @@ def process_single_flow(flow_path: Path, root_name: str | None, cfg: Config) -> 
     # Construir grafo en Neo4j
     log.info("Building graph in Neo4j...")
     script_dir = Path(__file__).resolve().parent
-    counters = build_graph(root_id, root_name_resolved, flow_index, script_dir)
+    counters = build_graph(root_id, root_name_resolved, flow_index, script_dir, cfg)
     
     return counters
 
@@ -106,9 +106,9 @@ def fetch_and_process_all_flows(cfg: Config, verbose: bool = False) -> dict:
         try:
             counters = process_single_flow(flow_file, flow_file.stem, cfg)
             log.info(f"✔ {flow_name} processed successfully")
-            log.info("  ProcessGroups: %s, Atlas Terms: %s, Kafka nodes: %s, Tables: %s",
+            log.info("  ProcessGroups: %s, Atlas Terms: %s, Kafka nodes: %s, Atlas->Kafka: %s, Tables: %s",
                      counters['pg_nodes'], counters['atlas_nodes'],
-                     counters['kafka_nodes'], counters['tabla_nodes'])
+                     counters['kafka_nodes'], counters['atlas_kafka_rels'], counters['tabla_nodes'])
             process_ok.append(flow_name)
 
         except Exception as e:
@@ -186,6 +186,7 @@ def main():
         log.info("Kafka nodos (PG x rol x topic): %s", counters['kafka_nodes'])
         log.info("Relaciones PRODUCE/CONSUME (PG->Kafka): %s", counters['kafka_rels'])
         log.info("Relaciones ENVIA_A (Kafka->Kafka): %s", counters['envia_a_rels'])
+        log.info("Relaciones PUBLICA_EN (Atlas->Kafka): %s", counters['atlas_kafka_rels'])
         log.info("Archivos mergeados: %s", counters['archivo_nodes'])
         log.info("Relaciones ESCRIBE_EN (PG->Archivo): %s", counters['escribe_rels'])
         log.info("Relaciones LEE_DE (PG->Archivo): %s", counters['lee_rels'])
