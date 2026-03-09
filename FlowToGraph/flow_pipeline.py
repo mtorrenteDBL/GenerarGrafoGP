@@ -12,6 +12,9 @@ import argparse
 import logging
 import sys
 from pathlib import Path
+
+# Add parent directory to path to allow imports from shared module
+sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import (
     DEFAULT_NOT_ALLOWED, DEFAULT_ALLOWED, 
     DEFAULT_LOGGING_NAME_REGEX, DEFAULT_LOGGING_TYPES,

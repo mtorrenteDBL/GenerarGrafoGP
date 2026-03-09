@@ -127,6 +127,100 @@ def build_graph(root_id: str, root_name: str, flow_index: FlowIndex, script_dir:
             for t in topics:
                 consumers_by_topic[t].add(pg)
 
+    # Pre-calculate node counts before attempting Neo4j insertion
+    estimated_pg_nodes = len(flow_index.pg_hierarchy) + 1  # +1 for root
+    estimated_pg_rels = sum(1 for pg in flow_index.pg_hierarchy if pg.parent_id)
+    
+    # Atlas terms
+    all_atlas_terms = set()
+    for terms in flow_index.terms_by_proc.values():
+        all_atlas_terms.update(terms)
+    estimated_atlas_nodes = len(all_atlas_terms)
+    estimated_atlas_rels = sum(len(terms) for terms in flow_index.terms_by_proc.values())
+    
+    # Kafka nodes (unique topic x role x pg x group_id combinations)
+    kafka_node_keys = set()
+    for pid, topics in flow_index.publish_topics_by_proc.items():
+        pg = flow_index.proc_to_pg.get(pid)
+        gid = flow_index.kafka_group_id_by_proc.get(pid)
+        if pg:
+            for t in topics:
+                kafka_node_keys.add((t, "PRODUCE", pg, gid))
+    for pid, topics in flow_index.consume_topics_by_proc.items():
+        pg = flow_index.proc_to_pg.get(pid)
+        gid = flow_index.kafka_group_id_by_proc.get(pid)
+        if pg:
+            for t in topics:
+                kafka_node_keys.add((t, "CONSUME", pg, gid))
+    estimated_kafka_nodes = len(kafka_node_keys)
+    estimated_kafka_rels = estimated_kafka_nodes  # one rel per node
+    
+    # Kafka ENVIA_A relations
+    estimated_envia_a_rels = sum(
+        len(consumers_by_topic.get(topic, set())) * (len(src_pgs) - 1) if len(src_pgs) > 1 else 0
+        for topic, src_pgs in producers_by_topic.items()
+        if topic in consumers_by_topic
+    )
+    
+    # Files (Archivos)
+    all_write_paths = set()
+    for paths in flow_index.write_paths_by_proc.values():
+        all_write_paths.update(paths)
+    all_read_paths = set()
+    for paths in flow_index.read_paths_by_proc.values():
+        all_read_paths.update(paths)
+    all_files = all_write_paths | all_read_paths
+    estimated_archivo_nodes = len(all_files)
+    estimated_escribe_rels = sum(len(paths) for paths in flow_index.write_paths_by_proc.values())
+    estimated_lee_rels = sum(len(paths) for paths in flow_index.read_paths_by_proc.values())
+    
+    # Tables
+    all_tables = set()
+    for tables in flow_index.sql_sources_by_pg.values():
+        all_tables.update(tables)
+    for table in flow_index.sql_destination_by_pg.values():
+        if table:
+            all_tables.add(table)
+    estimated_tabla_nodes = len(all_tables)
+    estimated_lee_tabla_rels = sum(len(sources) for sources in flow_index.sql_sources_by_pg.values())
+    estimated_escribe_tabla_rels = sum(1 for dest in flow_index.sql_destination_by_pg.values() if dest)
+    estimated_alimenta_rels = sum(
+        len(flow_index.sql_sources_by_pg.get(pg, set())) if dest else 0
+        for pg, dest in flow_index.sql_destination_by_pg.items()
+    )
+    
+    # Scripts
+    estimated_script_nodes = sum(len(refs) for refs in flow_index.script_refs_by_pg.values())
+    estimated_executes_rels = estimated_script_nodes
+    
+    # Atlas->Kafka relations (estimated)
+    estimated_atlas_kafka_rels = sum(
+        len(reachable_topics) for terms in flow_index.terms_by_proc.values() for reachable_topics in [
+            set(flow_index.publish_topics_by_proc.get(pid, []))
+            for pid in flow_index.publish_ids
+        ]
+    )
+    
+    log.info("=== Node Type Summary (Before Neo4j Insertion) ===")
+    log.info("  ProcessGroup nodes: %d", estimated_pg_nodes)
+    log.info("  ProcessGroup relations: %d", estimated_pg_rels)
+    log.info("  Atlas Term nodes: %d", estimated_atlas_nodes)
+    log.info("  Atlas relations (PG->Atlas): %d", estimated_atlas_rels)
+    log.info("  Kafka nodes: %d", estimated_kafka_nodes)
+    log.info("  Kafka relations (PG->Kafka): %d", estimated_kafka_rels)
+    log.info("  Kafka->Kafka relations (ENVIA_A): %d", estimated_envia_a_rels)
+    log.info("  Atlas->Kafka relations (PUBLICA_EN): %d (estimated)", estimated_atlas_kafka_rels)
+    log.info("  File nodes: %d", estimated_archivo_nodes)
+    log.info("  File write relations (PG->File): %d", estimated_escribe_rels)
+    log.info("  File read relations (PG->File): %d", estimated_lee_rels)
+    log.info("  Table nodes: %d", estimated_tabla_nodes)
+    log.info("  Table feed relations (Table->Table): %d (estimated)", estimated_alimenta_rels)
+    log.info("  Table read relations (PG->Table): %d", estimated_lee_tabla_rels)
+    log.info("  Table write relations (PG->Table): %d", estimated_escribe_tabla_rels)
+    log.info("  Script nodes: %d", estimated_script_nodes)
+    log.info("  Script execution relations (PG->Script): %d", estimated_executes_rels)
+    log.info("==================================================")
+
     driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASS))
     log.debug("Connected to Neo4j at %s", NEO4J_URI)
     _cfg = cfg or Config()
