@@ -254,7 +254,7 @@ def extract_file_paths_from_processors(
     total_read = sum(len(p) for p in read_paths.values())
     total_write = sum(len(p) for p in write_paths.values())
     if total_read or total_write:
-        log.info("Extracted %d read path(s), %d write path(s) from file processors", total_read, total_write)
+        log.debug("Extracted %d read path(s), %d write path(s) from file processors", total_read, total_write)
     if skipped_no_dir:
         log.debug("Skipped %d file processor(s) with unresolved/missing directory", skipped_no_dir)
     

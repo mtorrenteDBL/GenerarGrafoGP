@@ -26,6 +26,8 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+logging.getLogger("neo4j.notifications").setLevel(logging.ERROR)
+
 # =========================
 # Neo4j Setup
 # =========================
