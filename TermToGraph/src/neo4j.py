@@ -138,9 +138,15 @@ class Neo4jLoader:
         Returns a list of unique Atlas Term names.
         """
         query = "MATCH (at:`Atlas Term`) RETURN DISTINCT at.nombre AS nombre ORDER BY nombre"
+        
+        def query_terms(tx):
+            result = tx.run(query)
+            # Consume result BEFORE transaction closes
+            return [record["nombre"] for record in result if record["nombre"]]
+        
         with self.driver.session() as session:
-            result = session.execute_read(lambda tx: tx.run(query))
-            terms = [record["nombre"] for record in result if record["nombre"]]
+            terms = session.execute_read(query_terms)
+        
         return terms
 
     def ensure_constraints(self):
