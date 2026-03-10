@@ -58,57 +58,67 @@ class PipelineRunner:
             logger.error(f"Error searching for term JSON: {term}")
             return None, None, None, None
         
-        except Exception:
-            logger.error(f"Unexpected error processing term {term}.")
+        except Exception as e:
+            logger.error(f"Unexpected error processing term {term}: {e}")
             return None, None, None, None
 
         return display_name, entity, guid, origin
 
     def get_terms(self) -> List[str]:
-        # If Neo4j config is provided, query from Neo4j
+        all_terms = []
+        
+        # 1. Try Neo4j if configured
         if self.neo4j_config:
             logger.info('Querying Atlas Term nodes from Neo4j...')
             loader = Neo4jLoader(**self.neo4j_config)
             try:
-                terms = loader.get_all_atlas_terms()
-                logger.info(f'Found {len(terms)} Atlas Term nodes in Neo4j')
-                loader.close()
-                return terms
+                neo4j_terms = loader.get_all_atlas_terms()
+                logger.info(f'Found {len(neo4j_terms)} Atlas Term nodes in Neo4j')
+                all_terms.extend(neo4j_terms)
             except Exception as e:
-                logger.error(f"Error querying Neo4j for Atlas Terms: {e}")
-                loader.close()
-                return []
+                logger.warning(f"Neo4j query failed, falling back to CSV and data/git/: {e}")
+            finally:
+                try:
+                    loader.close()
+                except Exception as e:
+                    logger.warning(f"Failed to close Neo4j connection: {e}")
         
-        # Otherwise read from CSV (original behavior)
-        if not self.csv_path.exists():
-            raise FileNotFoundError(f"CSV not found: {self.csv_path}")
-
-        # Leer CSV y extraer las entidades
-        with self.csv_path.open("r", encoding="utf-8", newline="") as f:
-            reader = csv.DictReader(f)
-            if "atlas_term" not in (reader.fieldnames or []):
-                 raise ValueError("CSV missing 'atlas_term' column")
-            
-            # Eliminar duplicados
-            csv_terms = list(
-                dict.fromkeys(row["atlas_term"].strip() 
-                for row in reader if row.get("atlas_term"))
-            )
+        # 2. Try CSV if provided
+        csv_terms = []
+        if self.csv_path and self.csv_path.exists():
+            try:
+                with self.csv_path.open("r", encoding="utf-8", newline="") as f:
+                    reader = csv.DictReader(f)
+                    if "atlas_term" in (reader.fieldnames or []):
+                        # Eliminar duplicados
+                        csv_terms = list(
+                            dict.fromkeys(row["atlas_term"].strip() 
+                            for row in reader if row.get("atlas_term"))
+                        )
+                        logger.info(f'Found {len(csv_terms)} terms in CSV file')
+                        all_terms.extend(csv_terms)
+            except Exception as e:
+                logger.warning(f"Error reading from CSV: {e}")
         
-        # Leer archivos de GitLab (procesamos TODOS asumiendo 
-        # que si están en GitLab están productivos)
-        drs_atlas_files = glob("data/git/**/*.json", recursive=True)
-        drs_atlas_files = [Path(f).name.replace(".json", "") for f in drs_atlas_files] 
-
-        logging.info(f'Found {len(csv_terms)} terms in CSV file')
-        logging.info(f'Found {len(drs_atlas_files)} terms in DRS folder')
-
-        # Nos quedamos con las entidades de GitLab 
-        # y las del CSV sin duplicados
-        terms = list(set(csv_terms + drs_atlas_files))
-
-        logging.info(f'Total terms: {len(terms)}')
-
+        # 3. Always scan data/git/ for JSON files (procesamos TODOS asumiendo 
+        # que si están en data/git/ están productivos)
+        git_terms = []
+        try:
+            git_files = glob("data/git/**/*.json", recursive=True)
+            git_terms = [Path(f).name.replace(".json", "") for f in git_files]
+            if git_terms:
+                logger.info(f'Found {len(git_terms)} terms in data/git/')
+                all_terms.extend(git_terms)
+        except Exception as e:
+            logger.warning(f"Error scanning data/git/: {e}")
+        
+        # 4. Remove duplicates and return
+        terms = list(dict.fromkeys(all_terms))
+        
+        logger.info(f'Total unique terms: {len(terms)}')
+        if len(terms) == 0:
+            logger.warning('No terms found from any source (Neo4j, CSV, or data/git/)')
+        
         return terms
 
     def run_plan_mode(
