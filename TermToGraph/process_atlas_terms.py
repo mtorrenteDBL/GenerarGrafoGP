@@ -14,8 +14,8 @@ from os import getenv
 def main():
     
     parser = argparse.ArgumentParser()
-    # Default path is now relative to project root
-    parser.add_argument("--csv", default="../data/atlas_terms.csv")
+    # Optional CSV path (if not provided, will query Neo4j by default)
+    parser.add_argument("--csv", default=None, help="CSV file with Atlas terms (if not provided, will query Neo4j)")
     
     parser.add_argument("--no-constraints", action="store_true")
     parser.add_argument("--plan-only", action="store_true")
@@ -23,7 +23,19 @@ def main():
 
     args = parser.parse_args()
     
-    runner = PipelineRunner(args.csv)
+    # Load Neo4j config from environment variables
+    neo4j_config = {
+        "uri": getenv('NEO4J_HOST'),
+        "user": getenv('NEO4J_USER'),
+        "password": getenv('NEO4J_PASS'),
+    }
+    
+    # Create runner with Neo4j config by default, or CSV if explicitly provided
+    if args.csv:
+        runner = PipelineRunner(csv_path=args.csv, neo4j_config=neo4j_config)
+    else:
+        runner = PipelineRunner(neo4j_config=neo4j_config)
+    
     terms = runner.get_terms()
     
     # terms = ["veraz_modelo_03"]
@@ -32,12 +44,7 @@ def main():
         runner.run_plan_mode(terms, args.out_csv)
     
     else:
-        config = {
-            "uri": getenv('NEO4J_HOST'),
-            "user": getenv('NEO4J_USER'),
-            "password": getenv('NEO4J_PASS'),
-        }
-        return runner.run_load_mode(terms, config, delete_all=False)
+        return runner.run_load_mode(terms, neo4j_config, delete_all=False)
 
 if __name__ == "__main__":
     main()

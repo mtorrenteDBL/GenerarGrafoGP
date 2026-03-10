@@ -1,7 +1,7 @@
 [project]
 name = "generargrafopetersen"
 version = "0.1.0"
-description = "Unified orchestrator for FlowToGraph and Migracion GP pipelines"
+description = "Unified orchestrator for FlowToGraph and TermToGraph pipelines"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

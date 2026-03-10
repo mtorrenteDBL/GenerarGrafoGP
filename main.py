@@ -6,7 +6,7 @@ This script:
 1. Loads environment configuration
 2. Wipes the Neo4j database
 3. Runs the FlowToGraph pipeline
-4. Runs the Migracion GP pipeline
+4. Runs the TermToGraph pipeline
 
 Designed to be run via: bash /opt/GenerarGrafoGP/main.sh
 """
@@ -34,7 +34,7 @@ load_dotenv(env_file, override=True)
 
 # Add subprojects to path
 sys.path.insert(0, str(Path(__file__).parent / "FlowToGraph"))
-sys.path.insert(0, str(Path(__file__).parent / "Migracion GP"))
+sys.path.insert(0, str(Path(__file__).parent / "TermToGraph"))
 
 # Import subproject modules (static analysis warnings are expected - imports work at runtime)
 from flow_pipeline import fetch_and_process_all_flows  # type: ignore
@@ -182,9 +182,9 @@ def run_flow_to_graph_pipeline() -> dict:
         return _empty
 
 
-def run_migracion_gp_pipeline() -> dict:
+def run_term_to_graph_pipeline() -> dict:
     """
-    Run the Migracion GP pipeline to migrate Atlas terms to Neo4j.
+    Run the TermToGraph pipeline to migrate Atlas terms to Neo4j.
 
     Returns a dict with three keys:
         ok        – terms loaded successfully
@@ -193,14 +193,14 @@ def run_migracion_gp_pipeline() -> dict:
     An empty dict signals a hard failure (pipeline could not run at all).
     """
     log.info("")
-    log.info("=== Running Migracion GP Pipeline ===")
+    log.info("=== Running TermToGraph Pipeline ===")
 
     try:
         csv_file = Path(__file__).parent / "data" / "atlas_terms.csv"
 
         result = run_migration(csv_file)
 
-        log.info("=== Migracion GP Pipeline finished ===")
+        log.info("=== TermToGraph Pipeline finished ===")
         log.info("  Loaded successfully  (%d)", len(result["ok"]))
         log.info("  Not found           (%d)", len(result["not_found"]))
         log.info("  Failed              (%d): %s", len(result["failed"]), ", ".join(result["failed"]) or "—")
@@ -208,7 +208,7 @@ def run_migracion_gp_pipeline() -> dict:
         return result
 
     except Exception as e:
-        log.error(f"Migracion GP pipeline failed: {e}", exc_info=True)
+        log.error(f"TermToGraph pipeline failed: {e}", exc_info=True)
         return {}
 
 
@@ -380,7 +380,7 @@ def send_summary_email(
         f"  Processing failed        ({len(flow_process_fail)}): {', '.join(flow_process_fail) or _EM_DASH}",
         f"  Overall: {_CHECK + ' SUCCESS' if flow_success else _CROSS + ' FAILED'}",
         "",
-        "Migracion GP:",
+        "TermToGraph:",
         f"  Loaded successfully      ({len(mg_ok)})",
         f"  Not found                ({len(mg_not_found)})",
         f"  Failed                   ({len(mg_failed)}): {', '.join(mg_failed) or _EM_DASH}",
@@ -508,8 +508,8 @@ def _main():
     flow_process_fail = flow_result["process_fail"]
     flow_success = not flow_fetch_fail and not flow_process_fail
 
-    # 4. Run Migracion GP pipeline
-    migration_result  = run_migracion_gp_pipeline()
+    # 4. Run TermToGraph pipeline
+    migration_result  = run_term_to_graph_pipeline()
     mg_ok        = migration_result.get("ok", [])
     mg_not_found = migration_result.get("not_found", [])
     mg_failed    = migration_result.get("failed", [])
@@ -527,7 +527,7 @@ def _main():
     log.info("  Processing failed       (%d): %s", len(flow_process_fail),", ".join(flow_process_fail) or "—")
     log.info("  Overall: %s", "✔ SUCCESS" if flow_success else "✘ FAILED")
     log.info("")
-    log.info("Migracion GP:")
+    log.info("TermToGraph:")
     log.info("  Loaded successfully     (%d)", len(mg_ok))
     log.info("  Not found               (%d)", len(mg_not_found))
     log.info("  Failed                  (%d): %s", len(mg_failed), ", ".join(mg_failed) or "—")

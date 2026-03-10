@@ -18,8 +18,9 @@ logger = setup_logger('pipeline')
 
 class PipelineRunner:
     
-    def __init__(self, csv_path):
-        self.csv_path = Path(csv_path)
+    def __init__(self, csv_path=None, neo4j_config=None):
+        self.csv_path = Path(csv_path) if csv_path else None
+        self.neo4j_config = neo4j_config
         self.extractor = Extractor()
         self.atlas = Atlas()
 
@@ -64,6 +65,21 @@ class PipelineRunner:
         return display_name, entity, guid, origin
 
     def get_terms(self) -> List[str]:
+        # If Neo4j config is provided, query from Neo4j
+        if self.neo4j_config:
+            logger.info('Querying Atlas Term nodes from Neo4j...')
+            loader = Neo4jLoader(**self.neo4j_config)
+            try:
+                terms = loader.get_all_atlas_terms()
+                logger.info(f'Found {len(terms)} Atlas Term nodes in Neo4j')
+                loader.close()
+                return terms
+            except Exception as e:
+                logger.error(f"Error querying Neo4j for Atlas Terms: {e}")
+                loader.close()
+                return []
+        
+        # Otherwise read from CSV (original behavior)
         if not self.csv_path.exists():
             raise FileNotFoundError(f"CSV not found: {self.csv_path}")
 
@@ -81,7 +97,7 @@ class PipelineRunner:
         
         # Leer archivos de GitLab (procesamos TODOS asumiendo 
         # que si están en GitLab están productivos)
-        drs_atlas_files = glob("DRS_ATLAS_PROD/Prod/*/*.json")
+        drs_atlas_files = glob("data/git/**/*.json", recursive=True)
         drs_atlas_files = [Path(f).name.replace(".json", "") for f in drs_atlas_files] 
 
         logging.info(f'Found {len(csv_terms)} terms in CSV file')
@@ -200,29 +216,42 @@ class PipelineRunner:
         return results
 
 
-def run_migration(csv_path) -> dict:
-    """High-level entry point: load terms from *csv_path* and push to Neo4j.
+def run_migration(csv_path=None, neo4j_config=None) -> dict:
+    """High-level entry point: load terms from Neo4j by default, or from CSV if provided.
 
-    Neo4j connection details are read from the environment variables
-    NEO4J_HOST, NEO4J_USER, and NEO4J_PASS.
+    By default, queries Atlas Term nodes from Neo4j using the provided config.
+    If csv_path is provided, reads from CSV instead.
 
-    Returns the same dict as :meth:`PipelineRunner.run_load_mode`::
+    Args:
+        csv_path: Optional path to CSV file. If not provided, will query Neo4j.
+        neo4j_config: Dictionary with uri, user, password for Neo4j connection.
+                     If not provided, will attempt to read from environment variables.
 
-        {
-            "ok":        [...],   # terms loaded successfully
-            "not_found": [...],   # terms not found in Atlas or GitLab
-            "failed":    [...],   # terms that raised an exception
-        }
+    Returns:
+        Dictionary with results::
+
+            {
+                "ok":        [...],   # terms loaded successfully
+                "not_found": [...],   # terms not found in Atlas or GitLab
+                "failed":    [...],   # terms that raised an exception
+            }
     """
-    runner = PipelineRunner(str(csv_path))
+    # If neo4j_config not provided, read from env vars
+    if neo4j_config is None:
+        neo4j_config = {
+            "uri":      os.getenv("NEO4J_HOST"),
+            "user":     os.getenv("NEO4J_USER"),
+            "password": os.getenv("NEO4J_PASS"),
+        }
+    
+    # Create runner with Neo4j config by default, or CSV if explicitly provided
+    if csv_path:
+        runner = PipelineRunner(csv_path=csv_path, neo4j_config=neo4j_config)
+    else:
+        runner = PipelineRunner(neo4j_config=neo4j_config)
+    
     terms = runner.get_terms()
 
     logger.info(f"Processing {len(terms)} Atlas terms")
-
-    neo4j_config = {
-        "uri":      os.getenv("NEO4J_HOST"),
-        "user":     os.getenv("NEO4J_USER"),
-        "password": os.getenv("NEO4J_PASS"),
-    }
 
     return runner.run_load_mode(terms, neo4j_config, delete_all=False)

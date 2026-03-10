@@ -132,6 +132,17 @@ class Neo4jLoader:
     def close(self):
         self.driver.close()
 
+    def get_all_atlas_terms(self) -> List[str]:
+        """Query all Atlas Term node names from Neo4j.
+        
+        Returns a list of unique Atlas Term names.
+        """
+        query = "MATCH (at:`Atlas Term`) RETURN DISTINCT at.nombre AS nombre ORDER BY nombre"
+        with self.driver.session() as session:
+            result = session.execute_read(lambda tx: tx.run(query))
+            terms = [record["nombre"] for record in result if record["nombre"]]
+        return terms
+
     def ensure_constraints(self):
         # We use a managed transaction even for schema changes to be safe, 
         # though strictly schema ops are often autocommit. 

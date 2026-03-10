@@ -1,6 +1,6 @@
 # GenerarGrafoPetersen
 
-Unified orchestrator for FlowToGraph and Migracion GP pipelines with Neo4j graph database.
+Unified orchestrator for FlowToGraph and TermToGraph pipelines with Neo4j graph database.
 
 ## Project Structure
 
@@ -30,7 +30,7 @@ GenerarGrafoPetersen/
 │   ├── graph_builder.py
 │   └── find_sql.py         # ♻️ Imports from shared.sql_utils
 │
-└── Migracion GP/           # Subproject: Atlas term migration (only Python code)
+└── TermToGraph/            # Subproject: Atlas term migration (only Python code)
     ├── atlas_migration.py  # 🆕 Migration entry point
     └── src/
         ├── pipeline.py
@@ -41,11 +41,11 @@ GenerarGrafoPetersen/
 ## Key Improvements
 
 ### ✅ Eliminated Code Duplication
-- **Before**: Two duplicate copies of `sql_utils.py` in FlowToGraph and Migracion GP
+- **Before**: Two duplicate copies of `sql_utils.py` in FlowToGraph and TermToGraph
 - **After**: Single `shared/sql_utils.py` module used by both subprojects
 
 ### ✅ Python-Based Orchestration
-- **Before**: Bash scripts (`reset_and_run.sh`, `FlowToGraph/main.sh`, `Migracion GP/main.sh`) managed workflow
+- **Before**: Bash scripts (`reset_and_run.sh`, `FlowToGraph/main.sh`, `TermToGraph/main.sh`) managed workflow
 - **After**: Python `main.py` orchestrates entire pipeline with proper logging and error handling
 - **FlowToGraph**: Now self-contained with flow fetching built into `flow_pipeline.py`
 
@@ -65,7 +65,7 @@ GenerarGrafoPetersen/
 
 ### ✅ Better Modularity
 - **FlowToGraph** can run independently: `cd FlowToGraph && uv run python main.py`
-- **Migracion GP** remains focused on Atlas migration
+- **TermToGraph** remains focused on Atlas migration
 - Root orchestrator coordinates both pipelines
 
 ### ✅ Better Logging
@@ -115,8 +115,8 @@ cd FlowToGraph && uv run python flow_pipeline.py
 # Process a single specific flow file (legacy mode)
 cd FlowToGraph && uv run python flow_pipeline.py --flow flows/my_flow.json --root-name My_Flow
 
-# Run only Migracion GP pipeline
-cd "Migracion GP" && uv run python atlas_migration.py
+# Run only TermToGraph pipeline
+cd "TermToGraph" && uv run python atlas_migration.py
 ```
 
 ## Pipeline Flow
@@ -127,7 +127,7 @@ cd "Migracion GP" && uv run python atlas_migration.py
    - **Fetches** flow files from remote NiFi clusters via SSH (saved to `data/flows/`)
    - **Processes** each `.json`/`.xml` flow file
    - Builds graph structure in Neo4j (ProcessGroups, Atlas Terms, Kafka, Tables, etc.)
-4. **Migracion GP Pipeline**:
+4. **TermToGraph Pipeline**:
    - Reads `data/atlas_terms.csv`
    - Migrates Atlas lineage metadata to Neo4j
 5. **Summary**: Reports success/failure for each pipeline
@@ -192,7 +192,7 @@ bash setup_data.sh
 
 This script will:
 - Check if the `data/` directory exists
-- Migrate CSV files from old locations (FlowToGraph/, Migracion GP/) if found
+- Migrate CSV files from old locations (FlowToGraph/, TermToGraph/) if found
 - Verify required data files are present
 - Create the flows directory if needed
 
@@ -217,7 +217,7 @@ All dependencies are managed in `pyproject.toml`:
 # FlowToGraph/find_sql.py
 from sql_utils import SQLUtils
 
-# Migracion GP/src/extractors/extractor.py
+# TermToGraph/src/extractors/extractor.py
 from .sql_utils import SQLUtils
 ```
 
@@ -276,7 +276,7 @@ ssh -i $SSH_KEY_PATH $SSH_USER@<cluster-ip>
 Ensure data files are in the correct location:
 ```
 data/
-├── atlas_terms.csv      # Required for Migracion GP
+├── atlas_terms.csv      # Required for TermToGraph
 ├── info_clusters.csv    # Required for FlowToGraph SSH fetching
 └── flows/               # Auto-populated by fetch_flows
 ```
@@ -290,7 +290,7 @@ data/
 
 2. The script will automatically:
    - Migrate `FlowToGraph/info_clusters.csv` → `data/info_clusters.csv`
-   - Migrate `Migracion GP/atlas_terms.csv` → `data/atlas_terms.csv`
+   - Migrate `TermToGraph/atlas_terms.csv` → `data/atlas_terms.csv`
    - Create the `data/flows/` directory
    - Verify all required files are present
 
