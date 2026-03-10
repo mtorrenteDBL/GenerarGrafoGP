@@ -18,21 +18,36 @@ logger = setup_logger('pipeline')
 
 class PipelineRunner:
     
+    # Base directory for JSON term definitions from data/git/
+    GIT_TERMS_DIR = Path('data/git')
+    
     def __init__(self, csv_path=None, neo4j_config=None):
         self.csv_path = Path(csv_path) if csv_path else None
         self.neo4j_config = neo4j_config
         self.extractor = Extractor()
         self.atlas = Atlas()
+    
+    @staticmethod
+    def _get_git_json_files() -> list[Path]:
+        """Get all JSON files from GIT_TERMS_DIR recursively.
+        
+        Returns:
+            List of Path objects for all .json files found.
+        """
+        git_dir = PipelineRunner.GIT_TERMS_DIR
+        if not git_dir.exists():
+            return []
+        return list(git_dir.rglob("*.json"))
 
     def search_term(self, term: str, disable_gitlab = False) -> tuple[Optional[str], Optional[dict], Optional[str]]:
 
         display_name, entity, guid = None, None, None
         origin = None
         
-        # Busca la entidad en GitLab (simulado usando la carpeta DRS_ATLAS_PROD por ahora)
+        # Busca la entidad en data/git/
         try:
-            logger.debug('Searching for term JSON in GitLab...')
-            filepath = find_atlas_term_json(base_dir=Path('./DRS_ATLAS_PROD'), term_name=term)
+            logger.debug('Searching for term JSON in data/git/...')
+            filepath = find_atlas_term_json(base_dir=self.GIT_TERMS_DIR, term_name=term)
 
             if filepath is None:
 
@@ -104,13 +119,13 @@ class PipelineRunner:
         # que si están en data/git/ están productivos)
         git_terms = []
         try:
-            git_files = glob("data/git/**/*.json", recursive=True)
-            git_terms = [Path(f).name.replace(".json", "") for f in git_files]
+            git_files = self._get_git_json_files()
+            git_terms = [f.stem for f in git_files]  # stem = filename without extension
             if git_terms:
-                logger.info(f'Found {len(git_terms)} terms in data/git/')
+                logger.info(f'Found {len(git_terms)} terms in {self.GIT_TERMS_DIR}/')
                 all_terms.extend(git_terms)
         except Exception as e:
-            logger.warning(f"Error scanning data/git/: {e}")
+            logger.warning(f"Error scanning {self.GIT_TERMS_DIR}/: {e}")
         
         # 4. Remove duplicates and return
         terms = list(dict.fromkeys(all_terms))
