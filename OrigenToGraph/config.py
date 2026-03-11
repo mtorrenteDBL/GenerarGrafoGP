@@ -32,10 +32,11 @@ def get_elastic_config() -> dict:
 def get_hive_config() -> dict:
     """Return Hive / HiveServer2 connection parameters from environment."""
     return {
-        "host":     os.getenv("HIVE_HOST", "localhost"),
-        "username": os.getenv("HIVE_USERNAME"),
-        "password": os.getenv("HIVE_PASSWORD"),
-        "port":     int(os.getenv("HIVE_PORT", "10000")),
-        "database": os.getenv("HIVE_DATABASE", "default"),
-        "auth":     os.getenv("HIVE_AUTH", "CUSTOM"),
+        "host":           os.getenv("HIVE_HOST", "localhost"),
+        "username":       os.getenv("HIVE_USERNAME"),
+        "password":       os.getenv("HIVE_PASSWORD"),
+        "port":           int(os.getenv("HIVE_PORT", "10000")),
+        "database":       os.getenv("HIVE_DATABASE", "default"),
+        "auth_mechanism": os.getenv("HIVE_AUTH", "PLAIN"),
+        "timeout":        int(os.getenv("HIVE_TIMEOUT", "600")),
     }

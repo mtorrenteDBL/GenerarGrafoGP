@@ -12,13 +12,12 @@ dependencies = [
     "requests>=2.32.5",
     "sqlglot>=29.0.1",
     "sqlparse>=0.5.5",
-    # OrigenToGraph
-    "elasticsearch>=8.0.0",
     "impyla>=0.18.0",
     "thrift>=0.16.0",
     # Note: sasl and thrift-sasl are needed on Linux for SASL-authenticated Hive clusters.
     # Do NOT install them on Windows (require C++ build tools). Add on the target Linux host:
     #   uv add sasl thrift-sasl
+    "elasticsearch>=8,<9",
 ]
 
 [tool.uv]

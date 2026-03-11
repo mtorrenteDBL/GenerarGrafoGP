@@ -66,7 +66,7 @@ def _normalise(value: str | None) -> str | None:
 
 class HiveClient:
     """
-    Thin wrapper around a pyhive HiveServer2 connection.
+    Thin wrapper around an impyla HiveServer2 connection.
 
     Opens ONE connection per pipeline run, executes the UNION ALL query
     across all DIS audit tables, and returns a set of normalised table keys.
@@ -79,7 +79,8 @@ class HiveClient:
         password: str,
         port: int = 10000,
         database: str = "default",
-        auth: str = "CUSTOM",
+        auth_mechanism: str = "PLAIN",
+        timeout: int = 600,
     ) -> None:
         try:
             from impala.dbapi import connect  # local import – optional dep
@@ -96,7 +97,8 @@ class HiveClient:
             user=username,
             password=password,
             database=database,
-            auth_mechanism=auth,
+            auth_mechanism=auth_mechanism,
+            timeout=timeout,
         )
         logger.debug("HiveServer2 connection established")
 
