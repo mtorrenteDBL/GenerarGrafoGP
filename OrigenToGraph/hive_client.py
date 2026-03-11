@@ -60,6 +60,16 @@ def _build_query() -> str:
     return _DIS_QUERY.format(union_parts="\n    UNION ALL\n    ".join(parts))
 
 
+def _build_single_query(table: str) -> str:
+    """Build a query for a single DIS audit table."""
+    return (
+        "SELECT DISTINCT CAST(tabla AS STRING) AS tabla "
+        f"FROM {table} "
+        f"WHERE fecha_proceso >= date_sub(current_date(), {LOOKBACK_DAYS}) "
+        "AND tabla IS NOT NULL"
+    )
+
+
 def _normalise(value: str | None) -> str | None:
     """Lowercase and strip; return None if blank."""
     if not value:
@@ -120,31 +130,51 @@ class HiveClient:
 
     def get_dis_tables(self) -> Set[str]:
         """
-        Execute a single UNION ALL query across all DIS audit tables and
-        return a set of normalised table identifiers (lowercased).
+        Execute queries across all DIS audit tables and return a set of
+        normalised table identifiers (lowercased).
 
-        The normalised form is "db.table" or "table" depending on the value
-        stored in the `tabla` column.
+        Strategy:
+        1. Try a single UNION ALL query (fastest).
+        2. If compilation fails (e.g. Hive Metastore varchar SerDe issue),
+           fall back to querying each table individually, skipping any that fail.
+        3. Log a warning if all tables fail; return an empty set rather than
+           crashing the pipeline (all unresolved nodes will be classified as
+           "Proceso no estándar").
         """
         query = _build_query()
         logger.info("Executing DIS UNION ALL query (lookback=%d days):", LOOKBACK_DAYS)
         logger.debug("Full query:\n%s", query)
 
-        cursor = self._conn.cursor()
-        try:
-            logger.debug("Executing cursor...")
-            cursor.execute(query)
-            rows = cursor.fetchall()
-            logger.info("Query returned %d rows", len(rows))
-        except Exception as exc:
-            logger.error(
-                "Hive query failed after execute: %s",
-                exc,
-                exc_info=True,
+        rows = self._try_execute(query)
+        if rows is None:
+            # UNION ALL failed – query each table individually
+            logger.warning(
+                "UNION ALL query failed (likely a Hive Metastore varchar SerDe issue). "
+                "Falling back to per-table queries."
             )
-            raise
-        finally:
-            cursor.close()
+            rows = []
+            successful = 0
+            for table in _DIS_AUDIT_TABLES:
+                single_query = _build_single_query(table)
+                logger.debug("Trying individual query for: %s", table)
+                table_rows = self._try_execute(single_query, table_name=table)
+                if table_rows is not None:
+                    rows.extend(table_rows)
+                    successful += 1
+                    logger.info("  %s → %d rows", table, len(table_rows))
+                else:
+                    logger.warning("  %s → skipped (query failed)", table)
+            if successful == 0:
+                logger.error(
+                    "All %d DIS audit tables failed to query. "
+                    "This is a server-side Hive Metastore / SerDe issue "
+                    "(varchar column type not supported). "
+                    "All unresolved nodes will be classified as 'Proceso no estándar'.",
+                    len(_DIS_AUDIT_TABLES),
+                )
+                return set()
+        else:
+            logger.info("UNION ALL query returned %d rows", len(rows))
 
         results: Set[str] = set()
         skipped = 0
@@ -161,3 +191,24 @@ class HiveClient:
             skipped,
         )
         return results
+
+    def _try_execute(
+        self, query: str, table_name: str = "UNION ALL"
+    ):
+        """
+        Execute *query* and return the fetched rows, or None if it fails.
+        Logs the error at WARNING level so the caller can decide how to proceed.
+        """
+        cursor = self._conn.cursor()
+        try:
+            cursor.execute(query)
+            return cursor.fetchall()
+        except Exception as exc:
+            logger.warning(
+                "Hive query failed for %s: %s",
+                table_name,
+                exc,
+            )
+            return None
+        finally:
+            cursor.close()
