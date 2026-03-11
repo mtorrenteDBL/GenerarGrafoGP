@@ -140,16 +140,40 @@ def _deletes_atlas_term_for_props(props: dict[str, Any]) -> bool:
 # =========================
 
 def extract_atlas_terms_from_processors_map(processors: list[dict[str, Any]]) -> dict[ProcessorId, set[str]]:
-    """Extract atlas_term values from UpdateAttribute processors."""
+    """Extract atlas_term values from UpdateAttribute and GenerateFlowFile processors.
+
+    - UpdateAttribute: reads the `atlas_term` property (supports NiFi expressions / ifElse).
+    - GenerateFlowFile: reads the `Custom Text` property, where terms appear as a
+      comma-separated list on a single line.
+    """
     out: dict[ProcessorId, set[str]] = {}
     if not processors:
         return out
     for raw_p in processors:
         p = as_component(raw_p)
         ptype = str(p.get("type") or "")
+        props = _props_dict(p)
+
+        # ── GenerateFlowFile: terms listed in "Custom Text", comma-separated ──
+        if "GenerateFlowFile" in ptype:
+            custom_text = props.get("Custom Text") or props.get("custom-text") or ""
+            custom_text = "" if custom_text is None else str(custom_text)
+            # Only process if it's a single line (no newlines)
+            if "\n" in custom_text or "\r" in custom_text:
+                continue
+            terms = set()
+            for piece in custom_text.split(","):
+                piece = piece.strip()
+                if piece:
+                    terms.add(piece.lower())
+            if terms:
+                pid = p.get("instanceIdentifier") or p.get("id")
+                if pid:
+                    out[pid] = terms
+            continue
+
         if "UpdateAttribute" not in ptype:
             continue
-        props = _props_dict(p)
 
         terms = set()
         for k, v in props.items():
