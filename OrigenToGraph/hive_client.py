@@ -35,11 +35,13 @@ _DIS_AUDIT_TABLES = [
 # Notes:
 # - IS NOT NULL is pushed INTO each branch (Hive rejects aliases starting with '_')
 # - Outer subquery uses a plain alias `t`
-# - CAST to string to handle varchar column type issues in some Hive/Impala versions
+# - fecha_proceso is stored as a varchar in yyyyMMdd format; explicit cast avoids
+#   implicit varchar↔DATE coercion which triggers a SerDe error in some Hive versions.
 _UNION_PART = (
     "SELECT CAST(tabla AS STRING) AS tabla "
     "FROM {table} "
-    "WHERE fecha_proceso >= date_sub(current_date(), {days}) "
+    "WHERE CAST(from_unixtime(unix_timestamp(fecha_proceso, 'yyyyMMdd')) AS DATE) "
+    "    >= date_sub(current_date(), {days}) "
     "AND tabla IS NOT NULL"
 )
 
@@ -65,7 +67,8 @@ def _build_single_query(table: str) -> str:
     return (
         "SELECT DISTINCT CAST(tabla AS STRING) AS tabla "
         f"FROM {table} "
-        f"WHERE fecha_proceso >= date_sub(current_date(), {LOOKBACK_DAYS}) "
+        f"WHERE CAST(from_unixtime(unix_timestamp(fecha_proceso, 'yyyyMMdd')) AS DATE) "
+        f"    >= date_sub(current_date(), {LOOKBACK_DAYS}) "
         "AND tabla IS NOT NULL"
     )
 
