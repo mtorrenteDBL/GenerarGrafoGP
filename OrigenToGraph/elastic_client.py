@@ -24,22 +24,14 @@ comparison.
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
 from typing import Set
 
 logger = logging.getLogger(__name__)
 
 INDEX = "cron_microservicios_logs"
-LOOKBACK_DAYS = 60  # ≈ 2 months
 DATE_FIELD = "fecha_evento"
 # Maximum buckets per composite aggregation page
 _PAGE_SIZE = 1_000
-
-
-def _cutoff_iso() -> str:
-    """ISO-8601 timestamp for (now – LOOKBACK_DAYS)."""
-    cutoff = datetime.now(tz=timezone.utc) - timedelta(days=LOOKBACK_DAYS)
-    return cutoff.strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
 def _normalise(value: str | None) -> str | None:
@@ -68,33 +60,39 @@ _RULES: list[dict] = [
     {
         "alias_proceso": "MS02",
         "extra_filter": {"term": {"log_message.keyword": "Ingesta RAW exitosa."}},
-        "fields": ("table_raw",),
+        "fields":         ("table_raw",),
+        "keyword_fields": ("table_raw.keyword",),
     },
     {
         "alias_proceso": "MS02",
         "extra_filter": {"term": {"log_message.keyword": "Ingesta en CUR exitosa."}},
-        "fields": ("table_cur",),
+        "fields":         ("table_cur",),
+        "keyword_fields": ("table_cur.keyword",),
     },
     {
         "alias_proceso": "MS05",
-        "extra_filter": {"term": {"nivel_de_log": "FIN"}},
-        "fields": ("spark_table",),
+        "extra_filter": {"term": {"nivel_de_log.keyword": "FIN"}},
+        "fields":         ("spark_table",),
+        "keyword_fields": ("spark_table.keyword",),
     },
     {
         "alias_proceso": "MS06",
-        "extra_filter": {"term": {"nivel_de_log": "FIN"}},
-        "fields": ("table",),
+        "extra_filter": {"term": {"nivel_de_log.keyword": "FIN"}},
+        "fields":         ("table",),
+        "keyword_fields": ("table.keyword",),
     },
     # ── multi-field rules (database + table name) ──────────────────────
     {
         "alias_proceso": "MS08",
-        "extra_filter": {"term": {"nivel_de_log": "FIN"}},
-        "fields": ("database", "inserthbase_tabla_mapping_refinado"),
+        "extra_filter": {"term": {"nivel_de_log.keyword": "FIN"}},
+        "fields":         ("database", "inserthbase_tabla_mapping_refinado"),
+        "keyword_fields": ("database.keyword", "inserthbase_tabla_mapping_refinado.keyword"),
     },
     {
         "alias_proceso": "MS07",
-        "extra_filter": {"term": {"nivel_de_log": "FIN"}},
-        "fields": ("database", "table"),
+        "extra_filter": {"term": {"nivel_de_log.keyword": "FIN"}},
+        "fields":         ("database", "table"),
+        "keyword_fields": ("database.keyword", "table.keyword"),
     },
 ]
 
@@ -105,7 +103,7 @@ class ElasticClient:
     distinct Microservicios table names via composite aggregations.
     """
 
-    def __init__(self, host: str, port: int, username: str, password: str) -> None:
+    def __init__(self, host: str, port: int, username: str, password: str, lookback_days: int = 60) -> None:
         try:
             from elasticsearch import Elasticsearch  # local import – optional dep
         except ImportError as exc:
@@ -119,7 +117,9 @@ class ElasticClient:
             basic_auth=(username, password),
             request_timeout=60,
         )
-        logger.debug("Elasticsearch client created for %s:%s", host, port)
+        # ES date math string, e.g. "now-60d/d"
+        self._date_filter = {"range": {DATE_FIELD: {"gte": f"now-{lookback_days}d/d"}}}
+        logger.debug("Elasticsearch client created for %s:%s (lookback=%dd)", host, port, lookback_days)
 
     def close(self) -> None:
         self._es.close()
@@ -144,6 +144,7 @@ class ElasticClient:
         """
         buckets: list[dict] = []
         after_key = None
+        pages = 0
 
         while True:
             agg_body: dict = {
@@ -152,6 +153,11 @@ class ElasticClient:
             if after_key is not None:
                 agg_body["composite"]["after"] = after_key
 
+            logger.debug(
+                "Fetching composite agg page (after_key=%s, fields=%s)",
+                after_key,
+                [s for s in sources],
+            )
             resp = self._es.search(
                 index=INDEX,
                 body={
@@ -163,23 +169,35 @@ class ElasticClient:
 
             page = resp["aggregations"]["values"]["buckets"]
             buckets.extend(page)
+            pages += 1
+            logger.debug("Page %d: got %d buckets", pages, len(page))
 
             if len(page) < _PAGE_SIZE:
                 break  # last page
             after_key = page[-1]["key"]
 
+        logger.debug(
+            "Composite agg complete: %d pages, %d total buckets", pages, len(buckets)
+        )
         return buckets
 
     def _fetch_single_field(self, rule: dict, date_filter: dict) -> Set[str]:
         """Fetch distinct values for a single-field rule."""
         field = rule["fields"][0]
-        keyword_field = f"{field}.keyword"
+        keyword_field = rule["keyword_fields"][0]
+
+        logger.debug(
+            "Fetching single-field rule: alias_proceso=%s, field=%s, keyword_field=%s",
+            rule["alias_proceso"],
+            field,
+            keyword_field,
+        )
 
         query = {
             "bool": {
                 "filter": [
                     date_filter,
-                    {"term": {"alias_proceso": rule["alias_proceso"]}},
+                    {"term": {"alias_proceso.keyword": rule["alias_proceso"]}},
                     rule["extra_filter"],
                     {"exists": {"field": field}},
                 ]
@@ -188,14 +206,23 @@ class ElasticClient:
         sources = [{"val": {"terms": {"field": keyword_field}}}]
 
         results: Set[str] = set()
-        for bucket in self._composite_agg_pages(query, sources):
-            raw = bucket["key"].get("val")
-            norm = _normalise(raw)
-            if norm:
-                results.add(norm)
+        try:
+            for bucket in self._composite_agg_pages(query, sources):
+                raw = bucket["key"].get("val")
+                norm = _normalise(raw)
+                if norm:
+                    results.add(norm)
+        except Exception as exc:
+            logger.error(
+                "Error fetching single-field rule alias_proceso=%s, field=%s: %s",
+                rule["alias_proceso"],
+                field,
+                exc,
+                exc_info=True,
+            )
 
-        logger.debug(
-            "Rule MS%s/%s single-field '%s': %d distinct values",
+        logger.info(
+            "Rule %s/%s single-field '%s': %d distinct values",
             rule["alias_proceso"],
             rule["extra_filter"],
             field,
@@ -206,14 +233,13 @@ class ElasticClient:
     def _fetch_multi_field(self, rule: dict, date_filter: dict) -> Set[str]:
         """Fetch combined 'database.table' for a dual-field rule."""
         db_field, tbl_field = rule["fields"]
-        db_keyword = f"{db_field}.keyword"
-        tbl_keyword = f"{tbl_field}.keyword"
+        db_keyword, tbl_keyword = rule["keyword_fields"]
 
         query = {
             "bool": {
                 "filter": [
                     date_filter,
-                    {"term": {"alias_proceso": rule["alias_proceso"]}},
+                    {"term": {"alias_proceso.keyword": rule["alias_proceso"]}},
                     rule["extra_filter"],
                     {"exists": {"field": tbl_field}},
                 ]
@@ -233,7 +259,7 @@ class ElasticClient:
                 results.add(combined)
 
         logger.debug(
-            "Rule MS%s multi-field '%s'+'%s': %d distinct values",
+            "Rule %s multi-field '%s'+'%s': %d distinct values",
             rule["alias_proceso"],
             db_field,
             tbl_field,
@@ -248,10 +274,9 @@ class ElasticClient:
     def get_microservicios_tables(self) -> Set[str]:
         """
         Return a set of normalised table identifiers ("db.table" or "table",
-        all lowercase) that appear in Microservicios logs within the last
-        LOOKBACK_DAYS days.
+        all lowercase) that appear in Microservicios logs within the lookback window.
         """
-        date_filter = {"range": {DATE_FIELD: {"gte": _cutoff_iso()}}}
+        date_filter = self._date_filter
         all_tables: Set[str] = set()
 
         for rule in _RULES:

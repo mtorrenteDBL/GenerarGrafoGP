@@ -14,7 +14,7 @@ Audit tables queried:
 The `tabla` field in each table holds the "db.table" identifier.
 We issue a single UNION ALL query to minimise round-trips (Hive is slow).
 
-Connection uses pyhive (thrift / HiveServer2).
+Connection uses impyla (HiveServer2 / Thrift).
 """
 
 import logging
@@ -32,26 +32,29 @@ _DIS_AUDIT_TABLES = [
 ]
 
 # Single optimised query: one UNION ALL → one Hive job instead of 3.
+# Notes:
+# - IS NOT NULL is pushed INTO each branch (Hive rejects aliases starting with '_')
+# - Outer subquery uses a plain alias `t`
+_UNION_PART = (
+    "SELECT tabla "
+    "FROM {table} "
+    "WHERE fecha_proceso >= date_sub(current_date(), {days}) "
+    "AND tabla IS NOT NULL"
+)
+
 _DIS_QUERY = """
 SELECT DISTINCT tabla
 FROM (
     {union_parts}
-) _dis_union
-WHERE tabla IS NOT NULL
+) t
 """.strip()
-
-_UNION_PART = (
-    "SELECT tabla "
-    "FROM {table} "
-    "WHERE fecha_proceso >= date_sub(current_date(), {days})"
-)
 
 
 def _build_query() -> str:
     """Build the UNION ALL query across all DIS audit tables."""
     parts = [
-        _UNION_PART.format(table=t, days=LOOKBACK_DAYS)
-        for t in _DIS_AUDIT_TABLES
+        _UNION_PART.format(table=tbl, days=LOOKBACK_DAYS)
+        for tbl in _DIS_AUDIT_TABLES
     ]
     return _DIS_QUERY.format(union_parts="\n    UNION ALL\n    ".join(parts))
 
@@ -124,22 +127,36 @@ class HiveClient:
         """
         query = _build_query()
         logger.info("Executing DIS UNION ALL query (lookback=%d days):", LOOKBACK_DAYS)
-        logger.debug("Query:\n%s", query)
+        logger.debug("Full query:\n%s", query)
 
         cursor = self._conn.cursor()
         try:
+            logger.debug("Executing cursor...")
             cursor.execute(query)
             rows = cursor.fetchall()
+            logger.info("Query returned %d rows", len(rows))
+        except Exception as exc:
+            logger.error(
+                "Hive query failed after execute: %s",
+                exc,
+                exc_info=True,
+            )
+            raise
         finally:
             cursor.close()
 
         results: Set[str] = set()
+        skipped = 0
         for (tabla,) in rows:
             norm = _normalise(tabla)
             if norm:
                 results.add(norm)
+            else:
+                skipped += 1
 
         logger.info(
-            "Fetched %d distinct DIS table identifiers from Hive", len(results)
+            "Fetched %d distinct DIS table identifiers from Hive (skipped %d null/blank)",
+            len(results),
+            skipped,
         )
         return results

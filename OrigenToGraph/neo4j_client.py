@@ -40,7 +40,9 @@ class Neo4jClient:
         logger.debug("Neo4j driver created for %s", uri)
 
     def close(self) -> None:
+        logger.debug("Closing Neo4j connection...")
         self._driver.close()
+        logger.debug("Neo4j connection closed")
 
     def __enter__(self):
         return self
@@ -59,10 +61,15 @@ class Neo4jClient:
           - nombre   : table name (str)
           - database : database/schema name (str | None)
         """
+        logger.debug("Fetching all Tabla nodes from Neo4j...")
         with self._driver.session() as session:
             result = session.run(self._GET_ALL_TABLAS)
             rows = [dict(r) for r in result]
-        logger.info("Fetched %d Tabla nodes from Neo4j", len(rows))
+        logger.info(
+            "Fetched %d Tabla nodes from Neo4j (with %d having database defined)",
+            len(rows),
+            sum(1 for r in rows if r.get("database")),
+        )
         return rows
 
     def update_origen_batch(self, rows: list[dict]) -> None:
@@ -79,17 +86,35 @@ class Neo4jClient:
         # Neo4j recommends chunks of ~10 000 rows per transaction for large sets.
         chunk_size = 5_000
         total_updated = 0
+        ms_count = sum(1 for r in rows if r["origen"] == "Microservicios")
+        dis_count = sum(1 for r in rows if r["origen"] == "DIS")
+        ne_count = sum(1 for r in rows if r["origen"] == "Proceso no estándar")
+
+        logger.debug(
+            "Batching %d rows into chunks of %d (MS=%d, DIS=%d, NE=%d)",
+            len(rows),
+            chunk_size,
+            ms_count,
+            dis_count,
+            ne_count,
+        )
 
         with self._driver.session() as session:
             for start in range(0, len(rows), chunk_size):
                 chunk = rows[start : start + chunk_size]
+                logger.debug(
+                    "Updating chunk [%d:%d] (%d rows)...",
+                    start,
+                    start + len(chunk),
+                    len(chunk),
+                )
                 session.run(self._UPDATE_ORIGEN_BATCH, rows=chunk)
                 total_updated += len(chunk)
 
         logger.info(
-            "Updated `origen` on %d Tabla nodes (%d microservicios / %d DIS / %d no-estándar)",
+            "Updated `origen` on %d Tabla nodes (Microservicios=%d, DIS=%d, Proceso no estándar=%d)",
             total_updated,
-            sum(1 for r in rows if r["origen"] == "Microservicios"),
-            sum(1 for r in rows if r["origen"] == "DIS"),
-            sum(1 for r in rows if r["origen"] == "Proceso no estándar"),
+            ms_count,
+            dis_count,
+            ne_count,
         )

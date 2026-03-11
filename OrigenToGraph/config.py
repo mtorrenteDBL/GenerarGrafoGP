@@ -22,10 +22,11 @@ def get_neo4j_config() -> dict:
 def get_elastic_config() -> dict:
     """Return Elasticsearch connection parameters from environment."""
     return {
-        "host":     os.getenv("ELASTIC_HOST", "localhost"),
-        "port":     int(os.getenv("ELASTIC_PORT", "9200")),
-        "username": os.getenv("ELASTIC_USERNAME", "elastic"),
-        "password": os.getenv("ELASTIC_PASSWORD", "password"),
+        "host":          os.getenv("ELASTIC_HOST", "localhost"),
+        "port":          int(os.getenv("ELASTIC_PORT", "9200")),
+        "username":      os.getenv("ELASTIC_USERNAME", "elastic"),
+        "password":      os.getenv("ELASTIC_PASSWORD", "password"),
+        "lookback_days": int(os.getenv("ELASTIC_LOOKBACK_DAYS", "60")),
     }
 
 
