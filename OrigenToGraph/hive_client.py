@@ -35,8 +35,9 @@ _DIS_AUDIT_TABLES = [
 # Notes:
 # - IS NOT NULL is pushed INTO each branch (Hive rejects aliases starting with '_')
 # - Outer subquery uses a plain alias `t`
+# - CAST to string to handle varchar column type issues in some Hive/Impala versions
 _UNION_PART = (
-    "SELECT tabla "
+    "SELECT CAST(tabla AS STRING) AS tabla "
     "FROM {table} "
     "WHERE fecha_proceso >= date_sub(current_date(), {days}) "
     "AND tabla IS NOT NULL"
