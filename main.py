@@ -35,11 +35,13 @@ load_dotenv(env_file, override=True)
 # Add subprojects to path
 sys.path.insert(0, str(Path(__file__).parent / "FlowToGraph"))
 sys.path.insert(0, str(Path(__file__).parent / "TermToGraph"))
+sys.path.insert(0, str(Path(__file__).parent))
 
 # Import subproject modules (static analysis warnings are expected - imports work at runtime)
 from flow_pipeline import fetch_and_process_all_flows  # type: ignore
 from config import Config  # type: ignore
 from src.pipeline import run_migration  # type: ignore
+from OrigenToGraph import run_origen_pipeline  # type: ignore
 
 
 # Configure logging
@@ -180,6 +182,41 @@ def run_flow_to_graph_pipeline() -> dict:
     except Exception as e:
         log.error(f"FlowToGraph pipeline failed: {e}", exc_info=True)
         return _empty
+
+
+def run_origen_to_graph_pipeline() -> dict:
+    """
+    Run the OrigenToGraph pipeline to classify every Tabla node in Neo4j
+    with an `origen` attribute: "Microservicios", "DIS", or
+    "Proceso no estándar".
+
+    Returns a dict with keys:
+        microservicios  – nodes tagged "Microservicios"
+        dis             – nodes tagged "DIS"
+        no_estandar     – nodes tagged "Proceso no estándar"
+        total           – total Tabla nodes processed
+        errors          – list of error message strings
+    An empty dict signals a hard failure.
+    """
+    log.info("")
+    log.info("=== Running OrigenToGraph Pipeline ===")
+
+    try:
+        result = run_origen_pipeline()
+
+        log.info("=== OrigenToGraph pipeline finished ===")
+        log.info("  Total Tabla nodes   : %d", result.get("total", 0))
+        log.info("  Microservicios      : %d", result.get("microservicios", 0))
+        log.info("  DIS                 : %d", result.get("dis", 0))
+        log.info("  Proceso no estándar : %d", result.get("no_estandar", 0))
+        if result.get("errors"):
+            log.warning("  Errors (%d): %s", len(result["errors"]), "; ".join(result["errors"]))
+
+        return result
+
+    except Exception as e:
+        log.error(f"OrigenToGraph pipeline failed: {e}", exc_info=True)
+        return {}
 
 
 def run_term_to_graph_pipeline() -> dict:
@@ -348,6 +385,7 @@ def send_summary_email(
     flow_success: bool,
     migration_result: dict,
     migration_success: bool,
+    origen_result: dict,
     error_level: ErrorLevel,
 ) -> None:
     """Send a plain-text summary email with pipeline results.
@@ -365,6 +403,11 @@ def send_summary_email(
     mg_ok             = migration_result.get("ok", [])
     mg_not_found      = migration_result.get("not_found", [])
     mg_failed         = migration_result.get("failed", [])
+    or_total          = origen_result.get("total", 0)
+    or_ms             = origen_result.get("microservicios", 0)
+    or_dis            = origen_result.get("dis", 0)
+    or_ne             = origen_result.get("no_estandar", 0)
+    or_errors         = origen_result.get("errors", [])
 
     subject = f"[GenerarGrafoPetersen] {error_level.label()} {_EM_DASH} {timestamp}"
 
@@ -385,6 +428,14 @@ def send_summary_email(
         f"  Not found                ({len(mg_not_found)})",
         f"  Failed                   ({len(mg_failed)}): {', '.join(mg_failed) or _EM_DASH}",
         f"  Overall: {_CHECK + ' SUCCESS' if migration_success else _CROSS + ' FAILED'}",
+        "",
+        "OrigenToGraph:",
+        f"  Total Tabla nodes        ({or_total})",
+        f"  Microservicios           ({or_ms})",
+        f"  DIS                      ({or_dis})",
+        f"  Proceso no estándar      ({or_ne})",
+        f"  Errors                   ({len(or_errors)}): {'; '.join(or_errors) or _EM_DASH}",
+        f"  Overall: {_CHECK + ' SUCCESS' if not or_errors else _CROSS + ' FAILED (partial)'}",
         "=" * 60,
         "",
         f"Log file: {log_file}",
@@ -418,14 +469,19 @@ def send_crash_email(exc: BaseException) -> None:
 # Final state verification
 # ---------------------------------------------------------------------------
 
-def verify_final_state(flow_result: dict, migration_result: dict) -> ErrorLevel:
-    """Evaluate both pipeline results, classify the error level, and send the summary email.
+def verify_final_state(
+    flow_result: dict,
+    migration_result: dict,
+    origen_result: dict,
+) -> ErrorLevel:
+    """Evaluate all pipeline results, classify the error level, and send the summary email.
 
     Atlas term failure rate thresholds (failed / total attempted):
         >  5% → WARNING
         > 15% → ERROR     (also triggered by any flow fetch failure)
         > 30% → CRITICAL  (also triggered by any flow process failure)
 
+    OrigenToGraph errors degrade the level by one step.
     The highest triggered level wins. Returns the computed ErrorLevel.
     """
     mg_ok             = migration_result.get("ok", [])
@@ -433,6 +489,7 @@ def verify_final_state(flow_result: dict, migration_result: dict) -> ErrorLevel:
     mg_failed         = migration_result.get("failed", [])
     flow_fetch_fail   = flow_result.get("fetch_fail", [])
     flow_process_fail = flow_result.get("process_fail", [])
+    origen_errors     = origen_result.get("errors", [])
 
     # Atlas term failure rate
     mg_total     = len(mg_ok) + len(mg_not_found) + len(mg_failed)
@@ -441,7 +498,7 @@ def verify_final_state(flow_result: dict, migration_result: dict) -> ErrorLevel:
     # Evaluate from lowest to highest severity; last match wins
     level = ErrorLevel.NO_ERROR
 
-    if mg_fail_rate > _WARN_THRESHOLD:
+    if mg_fail_rate > _WARN_THRESHOLD or origen_errors:
         level = ErrorLevel.WARNING
 
     if mg_fail_rate > _ERROR_THRESHOLD or flow_fetch_fail:
@@ -462,6 +519,8 @@ def verify_final_state(flow_result: dict, migration_result: dict) -> ErrorLevel:
         log.info("    Flow fetch failures: %s", ", ".join(flow_fetch_fail))
     if flow_process_fail:
         log.info("    Flow process failures: %s", ", ".join(flow_process_fail))
+    if origen_errors:
+        log.info("    OrigenToGraph errors: %s", "; ".join(origen_errors))
 
     flow_success      = not flow_fetch_fail and not flow_process_fail
     migration_success = bool(migration_result) and not mg_failed
@@ -471,6 +530,7 @@ def verify_final_state(flow_result: dict, migration_result: dict) -> ErrorLevel:
         flow_success=flow_success,
         migration_result=migration_result,
         migration_success=migration_success,
+        origen_result=origen_result,
         error_level=level,
     )
 
@@ -515,7 +575,16 @@ def _main():
     mg_failed    = migration_result.get("failed", [])
     migration_success = bool(migration_result) and not mg_failed
 
-    # 5. Summary
+    # 5. Run OrigenToGraph pipeline (classifies Tabla nodes by loading origin)
+    origen_result   = run_origen_to_graph_pipeline()
+    or_total        = origen_result.get("total", 0)
+    or_ms           = origen_result.get("microservicios", 0)
+    or_dis          = origen_result.get("dis", 0)
+    or_ne           = origen_result.get("no_estandar", 0)
+    or_errors       = origen_result.get("errors", [])
+    origen_success  = bool(origen_result) and not or_errors
+
+    # 6. Summary
     log.info("")
     log.info("=" * 70)
     log.info("=== Pipeline Summary ===")
@@ -532,11 +601,23 @@ def _main():
     log.info("  Not found               (%d)", len(mg_not_found))
     log.info("  Failed                  (%d): %s", len(mg_failed), ", ".join(mg_failed) or "—")
     log.info("  Overall: %s", "✔ SUCCESS" if migration_success else "✘ FAILED")
+    log.info("")
+    log.info("OrigenToGraph:")
+    log.info("  Total Tabla nodes       (%d)", or_total)
+    log.info("  Microservicios          (%d)", or_ms)
+    log.info("  DIS                     (%d)", or_dis)
+    log.info("  Proceso no estándar     (%d)", or_ne)
+    log.info("  Errors                  (%d): %s", len(or_errors), "; ".join(or_errors) or "—")
+    log.info("  Overall: %s", "✔ SUCCESS" if origen_success else "✘ FAILED (partial)")
     log.info("=" * 70)
     log.info("=== All done ===")
 
-    # 6. Verify final state (classifies severity and sends summary email)
-    level = verify_final_state(flow_result=flow_result, migration_result=migration_result)
+    # 7. Verify final state (classifies severity and sends summary email)
+    level = verify_final_state(
+        flow_result=flow_result,
+        migration_result=migration_result,
+        origen_result=origen_result,
+    )
 
     # Exit with error code for anything above WARNING
     if level.value >= ErrorLevel.ERROR.value:
