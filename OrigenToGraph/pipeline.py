@@ -31,7 +31,7 @@ dict with keys:
 import logging
 from typing import Set
 
-from .config import get_neo4j_config, get_elastic_config, get_hive_config
+from .config import get_neo4j_config, get_elastic_config, get_hive_config, get_impala_config
 from .neo4j_client import Neo4jClient
 from .elastic_client import ElasticClient
 from .hive_client import HiveClient
@@ -176,15 +176,13 @@ def run_origen_pipeline() -> dict:
     # ── 4. Build DIS set from Hive (only if there are unresolved tables) ─ #
     dis_set: Set[str] = set()
     if unresolved:
-        hive_cfg = get_hive_config()
-        logger.info("Connecting to Hive at %s:%s …", hive_cfg["host"], hive_cfg["port"])
+        hive_cfg = get_impala_config()
+        logger.info("Connecting to Impala at %s:%s …", hive_cfg["host"], hive_cfg["port"])
         logger.debug(
-            "Hive config: host=%s, port=%s, user=%s, db=%s, auth=%s",
+            "Impala config: host=%s, port=%s, user=%s",
             hive_cfg["host"],
             hive_cfg["port"],
-            hive_cfg["username"],
-            hive_cfg["database"],
-            hive_cfg["auth_mechanism"],
+            hive_cfg["user"],
         )
         try:
             with HiveClient(**hive_cfg) as hive:

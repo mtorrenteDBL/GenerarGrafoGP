@@ -41,3 +41,14 @@ def get_hive_config() -> dict:
         "auth_mechanism": os.getenv("HIVE_AUTH", "PLAIN"),
         "timeout":        int(os.getenv("HIVE_TIMEOUT", "600")),
     }
+
+
+def get_impala_config() -> dict:
+    """Return Impala connection parameters from environment."""
+    return {
+        "host":    os.getenv("IMPALA_HOST", "localhost"),
+        "port":    int(os.getenv("IMPALA_PORT", "21050")),
+        "user":    os.getenv("IMPALA_USERNAME"),
+        "password": os.getenv("IMPALA_PASSWORD"),
+        "timeout": int(os.getenv("IMPALA_TIMEOUT", "600")),
+    }

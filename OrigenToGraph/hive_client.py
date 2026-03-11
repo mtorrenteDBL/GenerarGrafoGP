@@ -92,11 +92,9 @@ class HiveClient:
     def __init__(
         self,
         host: str,
-        username: str,
+        user: str,
         password: str,
-        port: int = 10000,
-        database: str = "default",
-        auth_mechanism: str = "PLAIN",
+        port: int = 21050,
         timeout: int = 600,
     ) -> None:
         try:
@@ -107,17 +105,15 @@ class HiveClient:
                 "Install it with: uv add impyla"
             ) from exc
 
-        logger.debug("Connecting to HiveServer2 via impyla at %s:%s ...", host, port)
+        logger.debug("Connecting to Impala via impyla at %s:%s ...", host, port)
         self._conn = connect(
             host=host,
             port=port,
-            user=username,
+            user=user,
             password=password,
-            database=database,
-            auth_mechanism=auth_mechanism,
             timeout=timeout,
         )
-        logger.debug("HiveServer2 connection established")
+        logger.debug("Impala connection established")
 
     def close(self) -> None:
         try:
