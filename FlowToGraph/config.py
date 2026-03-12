@@ -110,6 +110,7 @@ MERGE (parent)-[:CONTIENE]->(child)
 
 MERGE_ATLAS_TERM = """
 MERGE (at:`Atlas Term` {nombre: $nombre})
+ON CREATE SET at.origen = "NiFi"
 RETURN at
 """
 

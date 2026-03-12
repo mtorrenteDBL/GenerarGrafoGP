@@ -26,11 +26,11 @@ class GraphQueries:
         at.clave    = $clave,
         at.guid     = $guid,
         at.glossary = $glossary,
-        at.origin   = $origin
+        at.origen   = $origin
     ON MATCH SET
         at.clave    = coalesce($clave, at.clave),
         at.guid     = coalesce($guid, at.guid),
-        at.origin   = coalesce($origin, at.origin),
+        at.origen   = coalesce($origin, at.origen),
         at.glossary = coalesce($glossary, at.glossary)
     RETURN at
     """

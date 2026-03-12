@@ -55,7 +55,7 @@ class PipelineRunner:
                 try:
                     logger.debug('Searching for term JSON in Atlas...')
                     display_name, entity, guid = self.atlas.get_entity(term)
-                    origin = 'Apache Atlas'
+                    origin = 'Atlas'
 
                 except Exception:
                     logger.error(f"Error fetching term from Atlas: {term}", exc_info=True)
@@ -66,7 +66,7 @@ class PipelineRunner:
                 with open(filepath) as f:
                     display_name = str(filepath)
                     entity = json.load(f)
-                    origin = 'GitLab'
+                    origin = 'Git'
 
         # Si falla por acá es porque falló procesando el JSON, no buscandolo
         except json.JSONDecodeError:
