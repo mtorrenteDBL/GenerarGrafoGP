@@ -24,25 +24,25 @@ logger = logging.getLogger(__name__)
 
 LOOKBACK_DAYS = 60  # ≈ 2 months
 
-# DIS audit tables (all share the same schema: must have `tabla` + `fecha_proceso`)
-_DIS_AUDIT_TABLES = [
-    "test.log_drs_confirmados_snap",
-    "test.log_drs_confirmados_kudu",
-    "test.log_drs_confirmados_refinados",
+# DIS audit tables and their column names for tabla
+_DIS_SOURCES = [
+    ("test.log_drs_confirmados", "tabla_raw"),
+    ("test.log_drs_confirmados", "tabla_cur"),
+    ("test.log_drs_confirmados_snap", "tabla"),
+    ("test.log_drs_confirmados_kudu", "tabla"),
+    ("test.log_drs_confirmados_refinados", "tabla"),
 ]
 
-# Single optimised query: one UNION ALL → one Hive job instead of 3.
+# Single optimised query: one UNION ALL → one Hive job instead of 5.
 # Notes:
 # - IS NOT NULL is pushed INTO each branch (Hive rejects aliases starting with '_')
 # - Outer subquery uses a plain alias `t`
-# - fecha_proceso is stored as a varchar in yyyyMMdd format; explicit cast avoids
-#   implicit varchar↔DATE coercion which triggers a SerDe error in some Hive versions.
+# - fecha_proceso is stored as a varchar in yyyyMMdd format; comparison is done directly.
 _UNION_PART = (
-    "SELECT CAST(tabla AS STRING) AS tabla "
+    "SELECT CAST({col} AS STRING) AS tabla "
     "FROM {table} "
-    "WHERE CAST(from_unixtime(unix_timestamp(fecha_proceso, 'yyyyMMdd')) AS DATE) "
-    "    >= date_sub(current_date(), {days}) "
-    "AND tabla IS NOT NULL"
+    "WHERE {col} IS NOT NULL "
+    "AND fecha_proceso > '20260213'"
 )
 
 _DIS_QUERY = """
@@ -54,22 +54,21 @@ FROM (
 
 
 def _build_query() -> str:
-    """Build the UNION ALL query across all DIS audit tables."""
+    """Build the UNION ALL query across all DIS audit sources."""
     parts = [
-        _UNION_PART.format(table=tbl, days=LOOKBACK_DAYS)
-        for tbl in _DIS_AUDIT_TABLES
+        _UNION_PART.format(table=table, col=col)
+        for table, col in _DIS_SOURCES
     ]
     return _DIS_QUERY.format(union_parts="\n    UNION ALL\n    ".join(parts))
 
 
-def _build_single_query(table: str) -> str:
-    """Build a query for a single DIS audit table."""
+def _build_single_query(table: str, col: str) -> str:
+    """Build a query for a single DIS audit source."""
     return (
-        "SELECT DISTINCT CAST(tabla AS STRING) AS tabla "
+        f"SELECT DISTINCT CAST({col} AS STRING) AS tabla "
         f"FROM {table} "
-        f"WHERE CAST(from_unixtime(unix_timestamp(fecha_proceso, 'yyyyMMdd')) AS DATE) "
-        f"    >= date_sub(current_date(), {LOOKBACK_DAYS}) "
-        "AND tabla IS NOT NULL"
+        f"WHERE {col} IS NOT NULL "
+        f"AND fecha_proceso > '20260213'"
     )
 
 
@@ -141,35 +140,35 @@ class HiveClient:
            "Proceso no estándar").
         """
         query = _build_query()
-        logger.info("Executing DIS UNION ALL query (lookback=%d days):", LOOKBACK_DAYS)
+        logger.info("Executing DIS UNION ALL query (date filter: fecha_proceso > '20260213'):")
         logger.debug("Full query:\n%s", query)
 
         rows = self._try_execute(query)
         if rows is None:
-            # UNION ALL failed – query each table individually
+            # UNION ALL failed – query each source individually
             logger.warning(
                 "UNION ALL query failed (likely a Hive Metastore varchar SerDe issue). "
-                "Falling back to per-table queries."
+                "Falling back to per-source queries."
             )
             rows = []
             successful = 0
-            for table in _DIS_AUDIT_TABLES:
-                single_query = _build_single_query(table)
-                logger.debug("Trying individual query for: %s", table)
-                table_rows = self._try_execute(single_query, table_name=table)
+            for table, col in _DIS_SOURCES:
+                single_query = _build_single_query(table, col)
+                logger.debug("Trying individual query for: %s.%s", table, col)
+                table_rows = self._try_execute(single_query, table_name=f"{table}.{col}")
                 if table_rows is not None:
                     rows.extend(table_rows)
                     successful += 1
-                    logger.info("  %s → %d rows", table, len(table_rows))
+                    logger.info("  %s.%s → %d rows", table, col, len(table_rows))
                 else:
-                    logger.warning("  %s → skipped (query failed)", table)
+                    logger.warning("  %s.%s → skipped (query failed)", table, col)
             if successful == 0:
                 logger.error(
-                    "All %d DIS audit tables failed to query. "
+                    "All %d DIS audit sources failed to query. "
                     "This is a server-side Hive Metastore / SerDe issue "
                     "(varchar column type not supported). "
                     "All unresolved nodes will be classified as 'Proceso no estándar'.",
-                    len(_DIS_AUDIT_TABLES),
+                    len(_DIS_SOURCES),
                 )
                 return set()
         else:

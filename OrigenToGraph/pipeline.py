@@ -47,20 +47,12 @@ def _candidate_keys(nombre: str | None, database: str | None) -> list[str]:
     """
     Return the set of normalised lookup keys for a Neo4j Tabla node.
 
-    - If `database` is set and non-empty → primary key is "db.table" (lowercase).
-    - Secondary key is always just "table" (lowercase) for bare-name matches.
-
-    This dual lookup handles cases where the external source stores the full
-    qualified name (db.table) while the node only has the table name, or
-    vice-versa.
+    - Comparison is done by table name only (without database prefix).
     """
     nombre = (nombre or "").strip().lower()
     if not nombre:
         return []
 
-    database = (database or "").strip().lower()
-    if database:
-        return [f"{database}.{nombre}", nombre]
     return [nombre]
 
 
