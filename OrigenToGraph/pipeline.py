@@ -56,6 +56,16 @@ def _candidate_keys(nombre: str | None, database: str | None) -> list[str]:
     return [nombre]
 
 
+def _normalise_lookup(lookup: Set[str]) -> Set[str]:
+    """
+    Return a new set where every entry is reduced to the table name only.
+
+    Entries formatted as "db.table" are split on the last "." and only the
+    table-name part is kept. Bare names are left unchanged.
+    """
+    return {entry.split(".")[-1] if "." in entry else entry for entry in lookup}
+
+
 def _is_in_set(nombre: str | None, database: str | None, lookup: Set[str]) -> bool:
     """Return True if any candidate key for this node exists in `lookup`."""
     candidates = _candidate_keys(nombre, database)
@@ -137,7 +147,7 @@ def run_origen_pipeline() -> dict:
     )
     try:
         with ElasticClient(**elastic_cfg) as es:
-            elastic_set = es.get_microservicios_tables()
+            elastic_set = _normalise_lookup(es.get_microservicios_tables())
         logger.info(
             "Microservicios set built: %d distinct table identifiers",
             len(elastic_set),
@@ -178,7 +188,7 @@ def run_origen_pipeline() -> dict:
         )
         try:
             with HiveClient(**hive_cfg) as hive:
-                dis_set = hive.get_dis_tables()
+                dis_set = _normalise_lookup(hive.get_dis_tables())
             logger.info("DIS set built: %d distinct table identifiers", len(dis_set))
         except Exception as exc:
             msg = f"Hive query failed: {exc}"
