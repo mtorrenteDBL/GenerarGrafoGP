@@ -126,8 +126,18 @@ class PipelineRunner:
                 all_terms.extend(git_terms)
         except Exception as e:
             logger.warning(f"Error scanning {self.GIT_TERMS_DIR}/: {e}")
+
+        # 4. Fetch terms directly from Atlas API
+        atlas_terms = []
+        try:
+            atlas_terms = self.atlas.get_all_term_names()
+            if atlas_terms:
+                logger.info(f'Found {len(atlas_terms)} terms in Atlas API')
+                all_terms.extend(atlas_terms)
+        except Exception as e:
+            logger.warning(f"Error fetching terms from Atlas API: {e}")
         
-        # 4. Remove duplicates and return
+        # 5. Remove duplicates and return
         terms = list(dict.fromkeys(all_terms))
         
         logger.info(f'Total unique terms: {len(terms)}')
